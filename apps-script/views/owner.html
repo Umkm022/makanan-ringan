@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seblak Management - Owner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif; background: #F5F5F5; color: #212121; padding: 40px; }
+    :root { --primary: #C62828; --primary-dark: #B71C1C; --secondary: #FF6F00; }
+    h1 { color: var(--primary); margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    .debug { font-size: 13px; color: #757575; }
+  </style>
+</head>
+<body>
+  <h1>Seblak Management</h1>
+  <div class="card">
+    <p id="welcomeMsg">Memuat...</p>
+  </div>
+  <div class="card debug" id="debugInfo"></div>
+  <div style="margin-top:20px;">
+    <button onclick="testApi()" style="padding:12px 24px;background:#C62828;color:#fff;border:none;border-radius:8px;cursor:pointer;">Test API Call</button>
+    <button onclick="logout()" style="padding:12px 24px;background:#757575;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-left:8px;">Logout</button>
+  </div>
+  <div class="card" id="resultArea" style="display:none;"></div>
+
+  <script>
+    (function() {
+      try {
+        var USER = JSON.parse(sessionStorage.getItem('seblak_user') || '{}');
+        var TOKEN = sessionStorage.getItem('seblak_token');
+        document.getElementById('debugInfo').innerHTML = 'TOKEN exists: ' + !!TOKEN + '<br>USER keys: ' + Object.keys(USER).join(', ');
+
+        if (!TOKEN) {
+          document.getElementById('welcomeMsg').textContent = 'TIDAK ADA TOKEN — redirect ke login...';
+          setTimeout(function() { window.top.location.href = '?page=login'; }, 500);
+          return;
+        }
+
+        document.getElementById('welcomeMsg').textContent = 'Halo ' + (USER.full_name || USER.username || '-') + '! Login berhasil!';
+
+        window.api = function(action, params, callback) {
+          params = params || {};
+          params.action = action;
+          params.token = TOKEN;
+          google.script.run
+            .withSuccessHandler(callback)
+            .withFailureHandler(function(err) { alert('Error: ' + err.message); })
+            .handleApi(JSON.stringify(params));
+        };
+
+        window.testApi = function() {
+          var area = document.getElementById('resultArea');
+          area.style.display = 'block';
+          area.innerHTML = 'Memanggil API...';
+          api('getOwnerDashboard', {}, function(result) {
+            area.innerHTML = '<pre>' + JSON.stringify(result, null, 2) + '</pre>';
+          });
+        };
+
+        window.logout = function() {
+          google.script.run
+            .withSuccessHandler(function() { sessionStorage.clear(); window.top.location.href = '?page=login'; })
+            .destroySession(TOKEN);
+        };
+
+        document.getElementById('debugInfo').innerHTML += '<br>Script OK — menunggu interaksi';
+      } catch(e) {
+        document.getElementById('welcomeMsg').textContent = 'ERROR: ' + e.message;
+        document.getElementById('debugInfo').innerHTML = e.stack || e.toString();
+      }
+    })();
+  </script>
+</body>
+</html>

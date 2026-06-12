@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup - Seblak System</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif; background: linear-gradient(135deg, #C62828 0%, #FF6F00 100%); color: #212121; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .setup-card { background: #fff; border-radius: 16px; padding: 40px 32px; width: 100%; max-width: 480px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    .setup-logo { text-align: center; margin-bottom: 24px; }
+    .setup-logo h1 { font-size: 22px; color: #C62828; margin: 8px 0 4px; }
+    .setup-logo p { color: #757575; font-size: 13px; }
+    .form-group { margin-bottom: 20px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; color: #424242; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .form-group input { width: 100%; padding: 14px 16px; border: 2px solid #E0E0E0; border-radius: 10px; font-size: 15px; transition: border-color 0.2s; box-sizing: border-box; }
+    .form-group input:focus { border-color: #C62828; outline: none; }
+    .btn-primary { width: 100%; padding: 16px; background: #C62828; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s, transform 0.1s; }
+    .btn-primary:hover { background: #B71C1C; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { background: #BDBDBD; cursor: not-allowed; }
+    .btn-link { background: none; border: none; color: #757575; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 8px; }
+    .btn-link:hover { color: #C62828; }
+    .error-msg { color: #C62828; font-size: 13px; text-align: center; margin-top: 12px; display: none; }
+    .success-msg { color: #2E7D32; font-size: 13px; text-align: center; margin-top: 12px; display: none; }
+    .loading-spinner { display: none; text-align: center; margin-top: 16px; color: #757575; }
+    .info-text { font-size: 13px; color: #757575; margin-bottom: 24px; text-align: center; }
+    .footer-link { text-align: center; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="setup-card">
+    <div class="setup-logo">
+      <div style="font-size:48px;">🍜</div>
+      <h1>Setup Awal Sistem</h1>
+      <p>Buat akun Owner untuk memulai</p>
+    </div>
+    <div class="info-text">Akun owner memiliki akses penuh ke semua fitur.</div>
+
+    <div class="form-group">
+      <label>Nama Lengkap</label>
+      <input type="text" id="fullName" placeholder="Contoh: Pemilik Seblak" autocomplete="name">
+    </div>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" id="username" placeholder="Minimal 3 karakter" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Email (opsional)</label>
+      <input type="email" id="email" placeholder="owner@email.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="Minimal 6 karakter" autocomplete="new-password">
+    </div>
+    <div class="form-group">
+      <label>Konfirmasi Password</label>
+      <input type="password" id="passwordConfirm" placeholder="Ulangi password" autocomplete="new-password">
+    </div>
+
+    <button class="btn-primary" id="btnSetup" onclick="doSetup()">BUAT AKUN OWNER</button>
+    <div class="error-msg" id="errorMsg"></div>
+    <div class="success-msg" id="successMsg"></div>
+    <div class="loading-spinner" id="loadingSpinner">Memproses...</div>
+
+    <div class="footer-link">
+      <button class="btn-link" onclick="window.location.href='?page=login'">← Kembali ke Login</button>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('passwordConfirm').addEventListener('keyup', function(e) {
+      if (e.key === 'Enter') doSetup();
+    });
+
+    function doSetup() {
+      var fullName = document.getElementById('fullName').value.trim();
+      var username = document.getElementById('username').value.trim().toLowerCase();
+      var email = document.getElementById('email').value.trim();
+      var password = document.getElementById('password').value;
+      var passwordConfirm = document.getElementById('passwordConfirm').value;
+      var btn = document.getElementById('btnSetup');
+      var errorEl = document.getElementById('errorMsg');
+      var successEl = document.getElementById('successMsg');
+      var loadingEl = document.getElementById('loadingSpinner');
+
+      errorEl.style.display = 'none';
+      successEl.style.display = 'none';
+
+      if (!fullName) { showError('Nama lengkap harus diisi.'); return; }
+      if (!username || username.length < 3) { showError('Username minimal 3 karakter.'); return; }
+      if (!password || password.length < 6) { showError('Password minimal 6 karakter.'); return; }
+      if (password !== passwordConfirm) { showError('Konfirmasi password tidak cocok.'); return; }
+
+      btn.disabled = true;
+      loadingEl.style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          btn.disabled = false;
+          loadingEl.style.display = 'none';
+          if (result.success) {
+            successEl.style.display = 'block';
+            successEl.textContent = result.message;
+            setTimeout(function() { window.location.href = '?page=login'; }, 2000);
+          } else {
+            showError(result.message);
+          }
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          loadingEl.style.display = 'none';
+          showError('Koneksi error: ' + err.message);
+        })
+        .setupOwner({ fullName: fullName, username: username, email: email, password: password });
+    }
+
+    function showError(msg) {
+      var el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+  </script>
+</body>
+</html>

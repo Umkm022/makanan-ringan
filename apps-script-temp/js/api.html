@@ -1,0 +1,33 @@
+/* API.JS — Client-side API calls */
+function api(action, params, callback) {
+  params = params || {};
+  params.action = action;
+  params.token = TOKEN;
+  google.script.run
+    .withSuccessHandler(callback)
+    .withFailureHandler(function(err) { showToast('Error: ' + err.message, 'error'); })
+    .doPost(JSON.stringify(params));
+}
+
+function apiWithLoading(action, params, callback, loadingMsg) {
+  showToast(loadingMsg || 'Memproses...', 'info');
+  api(action, params, function(result) {
+    if (result.success) {
+      showToast(result.message || 'Berhasil!', 'success');
+      if (callback) callback(result);
+    } else {
+      showToast(result.message || 'Gagal!', 'error');
+    }
+  });
+}
+
+function formatRupiah(num) {
+  if (!num) return 'Rp 0';
+  return 'Rp ' + num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '-';
+  var d = new Date(dateStr);
+  return d.getDate() + '/' + (d.getMonth()+1) + '/' + d.getFullYear();
+}

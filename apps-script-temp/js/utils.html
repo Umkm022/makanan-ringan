@@ -1,0 +1,30 @@
+/* UTILS.JS — Client-side utilities */
+function getUrlParam(name) {
+  var url = new URL(window.location.href);
+  return url.searchParams.get(name);
+}
+
+function showLoading(container) {
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:#9E9E9E;"><div style="font-size:32px;margin-bottom:12px;">⏳</div><div>Memuat data...</div></div>';
+}
+
+function showEmpty(container, message, actionHtml) {
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#9E9E9E;"><div style="font-size:48px;margin-bottom:16px;">📭</div><div style="font-size:16px;margin-bottom:8px;">' + (message || 'Belum ada data') + '</div>' + (actionHtml || '') + '</div>';
+}
+
+function getStatusBadge(status) {
+  var map = {
+    'OPEN': '<span class="badge badge-warning">OPEN</span>',
+    'PARTIAL': '<span class="badge badge-info">PARTIAL</span>',
+    'PAID': '<span class="badge badge-success">PAID</span>',
+    'LUNAS': '<span class="badge badge-success">LUNAS</span>',
+    'BELUM BAYAR': '<span class="badge badge-warning">BELUM BAYAR</span>',
+    'AKTIF': '<span class="badge badge-success">AKTIF</span>',
+    'NONAKTIF': '<span class="badge badge-error">NONAKTIF</span>',
+    'SUSPEND': '<span class="badge badge-error">SUSPEND</span>',
+    'DRAFT': '<span class="badge badge-warning">DRAFT</span>',
+    'COMPLETED': '<span class="badge badge-success">COMPLETED</span>',
+    'READY': '<span class="badge badge-info">READY</span>'
+  };
+  return map[status] || '<span class="badge">' + status + '</span>';
+}

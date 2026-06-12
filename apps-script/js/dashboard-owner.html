@@ -1,0 +1,62 @@
+/* DASHBOARD-OWNER.JS — Owner dashboard rendering */
+function renderDashboard() {
+  var container = document.getElementById('contentBody');
+  showLoading(container);
+
+  api('getOwnerDashboard', {}, function(result) {
+    if (!result.success) { container.innerHTML = '<p>Error loading dashboard</p>'; return; }
+    var d = result.data;
+    var html = '';
+    // KPI Cards
+    html += '<div class="grid-4 mb-2">';
+    html += kpiCard('Omzet Hari Ini', formatRupiah(d.kpi.omzet_hari_ini), '💰');
+    html += kpiCard('Omzet Bulan Ini', formatRupiah(d.kpi.omzet_bulan_ini), '📈');
+    html += kpiCard('Laba Kotor', formatRupiah(d.kpi.laba_kotor), '📊');
+    html += kpiCard('Laba Bersih', formatRupiah(d.kpi.laba_bersih), '✅');
+    html += '</div>';
+    html += '<div class="grid-4 mb-2">';
+    html += kpiCard('Piutang Aktif', formatRupiah(d.kpi.piutang_aktif), '💳');
+    html += kpiCard('Stok Gudang', d.kpi.stok_gudang + ' pcs', '📋');
+    html += kpiCard('Stok Konsinyasi', d.kpi.stok_konsinyasi + ' pcs', '📦');
+    html += kpiCard('Biaya Bulan Ini', formatRupiah(d.kpi.biaya_bulan_ini), '💸');
+    html += '</div>';
+
+    // Chart placeholder
+    html += '<div class="card mb-2"><h3 class="mb-2">📈 Penjualan 30 Hari</h3><div id="chartHarian" style="height:200px;background:#FAFAFA;border-radius:8px;"></div></div>';
+
+    container.innerHTML = html;
+  });
+}
+
+function kpiCard(label, value, icon) {
+  return '<div class="card" style="text-align:center;"><div style="font-size:28px;margin-bottom:8px;">' + icon + '</div><div style="font-size:11px;color:#757575;text-transform:uppercase;letter-spacing:0.5px;">' + label + '</div><div style="font-size:24px;font-weight:800;color:#C62828;margin-top:4px;">' + value + '</div></div>';
+}
+
+function renderProduk() {
+  var c = document.getElementById('contentBody');
+  showLoading(c);
+  api('getProduk', {}, function(r) {
+    if (!r.success) return;
+    var html = '<div class="flex-between mb-2"><h3>Daftar Produk</h3><button class="btn btn-primary btn-sm" onclick="showFormProduk()">+ Tambah</button></div>';
+    html += '<table><tr><th>Kode</th><th>Nama</th><th>Varian</th><th>Harga Jual</th><th>HPP</th><th>Stok Min</th><th>Status</th></tr>';
+    (r.data||[]).forEach(function(p) {
+      html += '<tr><td>' + (p.kode_produk||'-') + '</td><td><strong>' + p.nama_produk + '</strong></td><td>' + (p.varian||'-') + '</td><td>' + formatRupiah(p.harga_jual) + '</td><td>' + formatRupiah(p.hpp) + '</td><td>' + (p.stok_minimum||0) + '</td><td>' + getStatusBadge(p.is_active === true || p.is_active === 'TRUE' ? 'AKTIF' : 'NONAKTIF') + '</td></tr>';
+    });
+    html += '</table>';
+    c.innerHTML = html;
+  });
+}
+
+function renderCustomer() {
+  var c = document.getElementById('contentBody');
+  showLoading(c);
+  api('getCustomers', {}, function(r) {
+    if (!r.success) return;
+    var html = '<h3 class="mb-2">Daftar Customer</h3><table><tr><th>Nama Toko</th><th>Pemilik</th><th>Kota</th><th>Sales</th><th>Status</th><th>Piutang</th></tr>';
+    (r.data||[]).forEach(function(cu) {
+      html += '<tr><td><strong>' + cu.store_name + '</strong></td><td>' + (cu.owner_name||'-') + '</td><td>' + (cu.kota||'-') + '</td><td>' + (cu.sales_id||'-') + '</td><td>' + getStatusBadge(cu.status) + '</td><td>' + formatRupiah(cu.total_piutang) + '</td></tr>';
+    });
+    html += '</table>';
+    c.innerHTML = html;
+  });
+}

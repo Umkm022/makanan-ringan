@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seblak Management System</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif; background: #F5F5F5; color: #212121; }
+    :root { --primary: #C62828; --primary-dark: #B71C1C; --secondary: #FF6F00; --bg: #F5F5F5; --surface: #FFFFFF; --text: #212121; --text-light: #757575; --success: #2E7D32; --warning: #F9A825; --error: #C62828; --info: #1565C0; --radius: 12px; --radius-sm: 8px; --shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .login-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #C62828 0%, #FF6F00 100%); padding: 20px; }
+    .login-card { background: #fff; border-radius: 16px; padding: 40px 32px; width: 100%; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    .login-logo { text-align: center; margin-bottom: 32px; }
+    .login-logo h1 { font-size: 24px; color: #C62828; margin: 8px 0 4px; }
+    .login-logo p { color: #757575; font-size: 13px; }
+    .form-group { margin-bottom: 20px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; color: #424242; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .form-group input { width: 100%; padding: 14px 16px; border: 2px solid #E0E0E0; border-radius: 10px; font-size: 15px; transition: border-color 0.2s; box-sizing: border-box; }
+    .form-group input:focus { border-color: #C62828; outline: none; }
+    .btn-login { width: 100%; padding: 16px; background: #C62828; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s, transform 0.1s; }
+    .btn-login:hover { background: #B71C1C; }
+    .btn-login:active { transform: scale(0.98); }
+    .btn-login:disabled { background: #BDBDBD; cursor: not-allowed; }
+    .error-msg { color: #C62828; font-size: 13px; text-align: center; margin-top: 12px; display: none; }
+    .loading-spinner { display: none; text-align: center; margin-top: 16px; color: #fff; }
+    .version { text-align: center; color: #9E9E9E; font-size: 11px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="login-card">
+      <div class="login-logo">
+        <div style="font-size:48px;">🍜</div>
+        <h1>Seblak Management</h1>
+        <p>Sistem Manajemen Konsinyasi</p>
+      </div>
+      <div id="setupBanner" style="display:none;background:#FFF3E0;border:2px solid #FF6F00;border-radius:10px;padding:16px;margin-bottom:20px;text-align:center;">
+        <div style="font-size:24px;margin-bottom:8px;">⚙️</div>
+        <div style="font-size:14px;font-weight:700;color:#E65100;">Sistem Belum Siap!</div>
+        <div style="font-size:13px;color:#BF360C;margin:8px 0;">Silakan setup awal untuk membuat akun owner.</div>
+        <button class="btn-login" style="background:#FF6F00;font-size:14px;padding:12px;" onclick="goSetup()">SETUP AWAL</button>
+      </div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="username" placeholder="Masukkan username" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="password" placeholder="Masukkan password" autocomplete="current-password">
+      </div>
+      <button class="btn-login" id="btnLogin" onclick="doLogin()">MASUK</button>
+      <div class="error-msg" id="errorMsg"></div>
+      <div class="loading-spinner" id="loadingSpinner">Memproses...</div>
+      <div class="version" id="versionText">v1.0 - Seblak System</div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('password').addEventListener('keyup', function(e) {
+      if (e.key === 'Enter') doLogin();
+    });
+
+    function doLogin() {
+      var username = document.getElementById('username').value.trim();
+      var password = document.getElementById('password').value.trim();
+      var btn = document.getElementById('btnLogin');
+      var errorEl = document.getElementById('errorMsg');
+      var loadingEl = document.getElementById('loadingSpinner');
+
+      if (!username || !password) {
+        showError('Silakan isi username dan password');
+        return;
+      }
+
+      btn.disabled = true;
+      loadingEl.style.display = 'block';
+      errorEl.style.display = 'none';
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          btn.disabled = false;
+          loadingEl.style.display = 'none';
+          if (result.success) {
+            sessionStorage.setItem('seblak_token', result.data.token);
+            sessionStorage.setItem('seblak_user', JSON.stringify(result.data.user));
+            // TEST: jangan redirect dulu — tampilkan data
+            var card = document.querySelector('.login-card');
+            card.innerHTML = '<div style="text-align:center;padding:20px;">' +
+              '<div style="font-size:48px;margin-bottom:16px;">✅</div>' +
+              '<h2 style="color:#2E7D32;">Login Berhasil!</h2>' +
+              '<p style="margin:12px 0;color:#666;">Token: ' + result.data.token.substring(0,30) + '...</p>' +
+              '<p style="margin:12px 0;color:#666;">User: ' + result.data.user.full_name + ' (' + result.data.user.role + ')</p>' +
+              '<button class="btn-login" onclick="window.top.location.href=\'?page=owner\'" style="margin-top:16px;">BUKA DASHBOARD OWNER</button>' +
+              '<button class="btn-login" onclick="window.top.location.href=\'?page=sales\'" style="background:#FF6F00;margin-top:8px;">BUKA DASHBOARD SALES</button>' +
+              '</div>';
+          } else {
+            showError(result.message);
+          }
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          loadingEl.style.display = 'none';
+          showError('Koneksi error: ' + err.message);
+        })
+        .authenticate(username, password);
+    }
+
+    function showError(msg) {
+      var el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function redirectByRole(role) {
+      var page = 'sales';
+      if (role === 'OWNER' || role === 'ADMIN') page = 'owner';
+      window.top.location.href = '?page=' + page;
+    }
+
+    function goSetup() {
+      window.top.location.href = '?page=setup';
+    }
+
+    // Auto-detect if system needs setup
+    (function() {
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success && result.data && !result.data.ready) {
+            document.getElementById('setupBanner').style.display = 'block';
+            document.getElementById('username').disabled = true;
+            document.getElementById('password').disabled = true;
+            document.getElementById('btnLogin').disabled = true;
+            var ver = document.getElementById('versionText');
+            ver.innerHTML = '🔧 Setup diperlukan';
+          }
+        })
+        .checkSystemReady();
+    })();
+
+    // Auto-login check — clear old sessions first
+    (function() {
+      var token = sessionStorage.getItem('seblak_token');
+      if (token) {
+        google.script.run
+          .withSuccessHandler(function(result) {
+            if (result && result.success !== false) {
+              var user = JSON.parse(sessionStorage.getItem('seblak_user') || '{}');
+              var card = document.querySelector('.login-card');
+              card.innerHTML = '<div style="text-align:center;padding:20px;">' +
+                '<div style="font-size:48px;margin-bottom:16px;">🔄</div>' +
+                '<h2 style="color:#2E7D32;">Session Aktif!</h2>' +
+                '<p style="margin:12px 0;color:#666;">Selamat datang kembali, ' + (user.full_name || user.username) + '</p>' +
+                '<button class="btn-login" onclick="window.top.location.href=\'?page=owner\'" style="margin-top:16px;">BUKA DASHBOARD</button>' +
+                '</div>';
+            } else {
+              sessionStorage.clear();
+            }
+          })
+          .withFailureHandler(function() { sessionStorage.clear(); })
+          .validateSession(token);
+      }
+    })();
+  </script>
+</body>
+</html>

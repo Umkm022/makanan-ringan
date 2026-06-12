@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pembayaran - Seblak Sales</title>
+  <?!= include('css/main'); ?>
+  <style>
+    body { background: #F5F5F5; max-width: 480px; margin: 0 auto; padding: 16px; }
+    .pay-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    .pay-header h2 { font-size: 18px; }
+    .invoice-item { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 8px; border: 2px solid transparent; cursor: pointer; }
+    .invoice-item.selected { border-color: #C62828; background: #FFF5F5; }
+  </style>
+</head>
+<body>
+  <div class="pay-header">
+    <button class="btn-icon" onclick="window.location.href='?page=sales'">←</button>
+    <h2>💰 Pembayaran</h2>
+  </div>
+  <div id="payContent"></div>
+  <?!= include('components/toast'); ?>
+
+  <script>
+    var TOKEN = sessionStorage.getItem('seblak_token');
+    var USER = JSON.parse(sessionStorage.getItem('seblak_user') || '{}');
+    if (!TOKEN) window.location.href = '?page=login';
+
+    var selectedInvoices = [];
+    var piutangList = [];
+
+    function loadPiutang() {
+      api('getPiutang', {}, function(r) {
+        if (!r.success) return;
+        piutangList = r.data.filter(function(p) { return p.status !== 'PAID'; });
+        renderPiutang();
+      });
+    }
+
+    function renderPiutang() {
+      var c = document.getElementById('payContent');
+      if (piutangList.length === 0) {
+        c.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#9E9E9E;"><div style="font-size:48px;margin-bottom:12px;">🎉</div><div>Semua piutang sudah lunas!</div></div>';
+        return;
+      }
+      var html = '<p style="color:#757575;margin-bottom:12px;">Pilih invoice yang akan dibayar:</p>';
+      piutangList.forEach(function(p, idx) {
+        html += '<div class="invoice-item" id="inv-' + idx + '" onclick="toggleInvoice(' + idx + ')">';
+        html += '<div class="flex-between"><strong>' + p.invoice_id + '</strong>' + getStatusBadge(p.status) + '</div>';
+        html += '<div style="font-size:13px;color:#757575;margin-top:4px;">Customer: ' + p.customer_id + '</div>';
+        html += '<div class="flex-between mt-1"><span>Sisa: <strong>' + formatRupiah(p.sisa_piutang) + '</strong></span><span style="font-size:12px;color:#757575;">Jatuh tempo: ' + formatDate(p.jatuh_tempo) + '</span></div>';
+        html += '</div>';
+      });
+      html += '<div class="card mt-2">';
+      html += '<div class="flex-between mb-2"><span>Total Dipilih:</span><span style="font-size:20px;font-weight:800;color:#C62828;" id="totalSelected">Rp 0</span></div>';
+      html += '<label>Jumlah Bayar</label>';
+      html += '<input type="number" id="jumlahBayar" placeholder="0" min="0" style="margin-bottom:12px;">';
+      html += '<label>Metode Bayar</label>';
+      html += '<select id="metodeBayar" style="margin-bottom:12px;"><option value="TUNAI">Tunai</option><option value="TRANSFER">Transfer</option></select>';
+      html += '<label>No. Referensi</label>';
+      html += '<input type="text" id="refBayar" placeholder="Opsional" style="margin-bottom:16px;">';
+      html += '<button class="btn btn-primary btn-block" onclick="bayar()">Konfirmasi Pembayaran</button>';
+      html += '</div>';
+      c.innerHTML = html;
+    }
+
+    function toggleInvoice(idx) {
+      var el = document.getElementById('inv-' + idx);
+      var piutang = piutangList[idx];
+      var i = selectedInvoices.indexOf(piutang.piutang_id);
+      if (i > -1) {
+        selectedInvoices.splice(i, 1);
+        el.classList.remove('selected');
+      } else {
+        selectedInvoices.push(piutang.piutang_id);
+        el.classList.add('selected');
+      }
+      updateTotal();
+    }
+
+    function updateTotal() {
+      var total = 0;
+      selectedInvoices.forEach(function(id) {
+        var p = piutangList.filter(function(x) { return x.piutang_id === id; });
+        if (p.length > 0) total += p[0].sisa_piutang;
+      });
+      document.getElementById('totalSelected').textContent = formatRupiah(total);
+    }
+
+    function bayar() {
+      if (selectedInvoices.length === 0) { showToast('Pilih invoice terlebih dahulu', 'warning'); return; }
+      var jumlah = parseFloat(document.getElementById('jumlahBayar').value);
+      if (!jumlah || jumlah <= 0) { showToast('Masukkan jumlah bayar', 'warning'); return; }
+
+      selectedInvoices.forEach(function(piutangId) {
+        var metode = document.getElementById('metodeBayar').value;
+        var ref = document.getElementById('refBayar').value;
+        apiWithLoading('createPembayaran', {
+          data: {
+            piutang_id: piutangId,
+            jumlah_bayar: jumlah,
+            metode_bayar: metode,
+            bukti_bayar: ref
+          }
+        }, function(r) {
+          if (r.success) {
+            showToast('Pembayaran berhasil!', 'success');
+            setTimeout(function() { window.location.href = '?page=sales'; }, 1000);
+          }
+        }, 'Memproses pembayaran...');
+      });
+    }
+
+    loadPiutang();
+  </script>
+  <script><?!= include('js/api'); ?><?!= include('js/utils'); ?></script>
+</body>
+</html>

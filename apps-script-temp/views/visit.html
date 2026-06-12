@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Kunjungan - Seblak Sales</title>
+  <?!= include('css/main'); ?>
+  <?!= include('css/sales'); ?>
+  <style>
+    body { background: #F5F5F5; }
+    .visit-header { background: var(--primary); color: #fff; padding: 16px; display: flex; align-items: center; gap: 12px; }
+    .visit-header h2 { font-size: 16px; }
+    .visit-header .sub { font-size: 12px; opacity: 0.8; }
+    .save-bar { position: fixed; bottom: 0; left: 0; right: 0; max-width: 480px; margin: 0 auto; padding: 12px 16px; background: #fff; border-top: 1px solid #E0E0E0; display: flex; gap: 8px; z-index: 100; }
+    .save-bar button { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="visit-header" id="visitHeader">
+    <button class="btn-icon" style="color:#fff;" onclick="window.location.href='?page=sales'">←</button>
+    <div>
+      <h2 id="storeName">Loading...</h2>
+      <div class="sub" id="storeInfo">Memuat data kunjungan</div>
+    </div>
+  </div>
+  <div style="padding: 16px; padding-bottom: 80px;" id="visitContent">
+    <div id="kunjunganId" style="display:none;"></div>
+    <!-- Dynamic product input cards -->
+  </div>
+  <div class="save-bar" id="saveBar" style="display:none;">
+    <button class="btn btn-primary" onclick="simpanKunjungan()">💾 Simpan Kunjungan</button>
+    <button class="btn btn-secondary" onclick="simpanDanRestock()">💾 + Restock</button>
+  </div>
+
+  <?!= include('components/toast'); ?>
+
+  <script>
+    var TOKEN = sessionStorage.getItem('seblak_token');
+    var USER = JSON.parse(sessionStorage.getItem('seblak_user') || '{}');
+    if (!TOKEN) window.location.href = '?page=login';
+
+    var customerId = getUrlParam('customer');
+    var kunjunganId = null;
+    var produkData = [];
+
+    function initVisit() {
+      if (!customerId) {
+        document.getElementById('storeName').textContent = 'Error: Customer ID tidak ditemukan';
+        return;
+      }
+      document.getElementById('storeName').textContent = 'Mendapatkan lokasi GPS...';
+      var doStart = function(lat, lng) {
+        api('startKunjungan', {customerId: customerId, latitude: lat, longitude: lng}, function(result) {
+          if (!result.success) {
+            showToast(result.message, 'error');
+            return;
+          }
+          var d = result.data;
+          kunjunganId = d.kunjungan_id;
+          document.getElementById('kunjunganId').textContent = kunjunganId;
+          document.getElementById('storeName').textContent = d.customer.store_name;
+          document.getElementById('storeInfo').textContent = d.customer.kota + ' • Terakhir: ' + (d.last_visit ? formatDate(d.last_visit) : 'Belum pernah');
+          produkData = d.produk;
+          renderProdukCards();
+          document.getElementById('saveBar').style.display = 'flex';
+        });
+      };
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          function(pos){ doStart(pos.coords.latitude, pos.coords.longitude); },
+          function(err){ console.warn('GPS error:', err.message); doStart('', ''); },
+          {enableHighAccuracy:true,timeout:10000}
+        );
+      } else {
+        doStart('', '');
+      }
+    }
+
+    function renderProdukCards() {
+      var container = document.getElementById('visitContent');
+      var html = '';
+      produkData.forEach(function(p, idx) {
+        html += '<div class="visit-produk-card" id="card-' + idx + '">';
+        html += '<div class="flex-between"><span class="produk-name">' + p.nama_produk + '</span><span class="badge badge-info">' + (p.varian || '-') + '</span></div>';
+        html += '<div class="produk-info">Stok Awal: ' + p.stok_awal + ' • Target Display: ' + p.target_display + ' • Harga: ' + formatRupiah(p.harga_jual) + '</div>';
+        html += '<div class="visit-input-group">';
+        html += '<input type="number" id="sisa-' + idx + '" placeholder="Sisa" value="' + p.stok_awal + '" min="0" onchange="hitungProduk(' + idx + ')">';
+        html += '<input type="number" id="rusak-' + idx + '" placeholder="Rusak" value="0" min="0" onchange="hitungProduk(' + idx + ')">';
+        html += '<input type="number" id="retur-' + idx + '" placeholder="Retur" value="0" min="0" onchange="hitungProduk(' + idx + ')">';
+        html += '</div>';
+        html += '<div class="visit-result" id="result-' + idx + '">';
+        html += '<div class="flex-between"><span class="label">Terjual:</span><span class="value" style="color:#2E7D32;" id="terjual-' + idx + '">0</span></div>';
+        html += '<div class="flex-between"><span class="label">Rekomendasi Restock:</span><span style="font-size:16px;font-weight:700;color:#FF6F00;" id="restock-' + idx + '">0</span></div>';
+        html += '</div>';
+        html += '</div>';
+      });
+      container.innerHTML = html;
+
+      // Calculate initial values
+      produkData.forEach(function(p, idx) {
+        hitungProduk(idx);
+      });
+    }
+
+    function hitungProduk(idx) {
+      var p = produkData[idx];
+      var sisa = parseInt(document.getElementById('sisa-' + idx).value) || 0;
+      var rusak = parseInt(document.getElementById('rusak-' + idx).value) || 0;
+      var retur = parseInt(document.getElementById('retur-' + idx).value) || 0;
+      var terjual = Math.max(0, p.stok_awal - sisa - rusak - retur);
+      var restock = Math.max(0, p.target_display - sisa);
+
+      document.getElementById('terjual-' + idx).textContent = terjual;
+      document.getElementById('restock-' + idx).textContent = restock;
+    }
+
+    function getItems() {
+      return produkData.map(function(p, idx) {
+        return {
+          produk_id: p.produk_id,
+          stok_awal: p.stok_awal,
+          sisa_fisik: parseInt(document.getElementById('sisa-' + idx).value) || 0,
+          rusak: parseInt(document.getElementById('rusak-' + idx).value) || 0,
+          retur: parseInt(document.getElementById('retur-' + idx).value) || 0,
+          target_display: p.target_display,
+          harga_jual: p.harga_jual,
+          hpp: p.hpp
+        };
+      });
+    }
+
+    function simpanKunjungan() {
+      var items = getItems();
+      apiWithLoading('saveSisaStok', {kunjunganId: kunjunganId, items: items}, function(r) {
+        if (r.success) {
+          apiWithLoading('finalizeKunjungan', {kunjunganId: kunjunganId}, function(r2) {
+            if (r2.success) {
+              showToast('Kunjungan selesai! Invoice: ' + formatRupiah(r2.data.total_invoice), 'success');
+              setTimeout(function() { window.location.href = '?page=sales'; }, 1500);
+            }
+          });
+        }
+      }, 'Menyimpan kunjungan...');
+    }
+
+    function simpanDanRestock() {
+      simpanKunjungan();
+    }
+
+    initVisit();
+  </script>
+  <script><?!= include('js/api'); ?><?!= include('js/utils'); ?></script>
+</body>
+</html>

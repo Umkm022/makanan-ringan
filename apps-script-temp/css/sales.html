@@ -1,0 +1,26 @@
+/* SALES.CSS — Mobile-first sales layout */
+.sales-app { max-width: 480px; margin: 0 auto; min-height: 100vh; background: #F5F5F5; padding-bottom: 80px; }
+.sales-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--primary); color: #fff; position: sticky; top: 0; z-index: 50; }
+.sales-header h3 { font-size: 16px; font-weight: 600; }
+.sales-content { padding: 16px; }
+.sales-card { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; margin-bottom: 12px; }
+.sales-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.kpi-card { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; text-align: center; }
+.kpi-card .kpi-value { font-size: 22px; font-weight: 800; color: var(--primary); margin-top: 4px; }
+.kpi-card .kpi-label { font-size: 11px; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; max-width: 480px; margin: 0 auto; background: #fff; display: flex; border-top: 1px solid #E0E0E0; z-index: 100; }
+.nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; cursor: pointer; font-size: 10px; color: #9E9E9E; transition: color 0.2s; }
+.nav-item .nav-icon { font-size: 20px; margin-bottom: 2px; }
+.nav-item.active { color: var(--primary); }
+.nav-item.active .nav-icon { color: var(--primary); }
+.visit-produk-card { background: #fff; border-radius: var(--radius); padding: 16px; margin-bottom: 12px; border: 1px solid #E0E0E0; }
+.visit-produk-card .produk-name { font-weight: 700; font-size: 15px; }
+.visit-produk-card .produk-info { font-size: 12px; color: var(--text-light); margin: 4px 0 12px; }
+.visit-input-group { display: flex; gap: 8px; margin-bottom: 8px; }
+.visit-input-group input { flex: 1; padding: 10px; font-size: 14px; text-align: center; }
+.visit-result { background: #F5F5F5; border-radius: var(--radius-sm); padding: 12px; margin-top: 8px; }
+.visit-result .label { font-size: 12px; color: var(--text-light); }
+.visit-result .value { font-size: 18px; font-weight: 700; color: var(--success); }
+@media (max-width: 480px) {
+  .sales-content { padding: 12px; }
+}

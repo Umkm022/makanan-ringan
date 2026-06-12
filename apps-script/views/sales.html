@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seblak Sales</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif; background: #F5F5F5; color: #212121; }
+    :root { --primary: #C62828; --primary-dark: #B71C1C; --secondary: #FF6F00; --bg: #F5F5F5; --surface: #FFFFFF; --text: #212121; --text-light: #757575; --success: #2E7D32; --warning: #F9A825; --error: #C62828; --info: #1565C0; --radius: 12px; --radius-sm: 8px; --shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 12px 24px; border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; text-decoration: none; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-secondary { background: var(--secondary); color: #fff; }
+    .btn-outline { background: transparent; border: 2px solid var(--primary); color: var(--primary); }
+    .btn-sm { padding: 8px 16px; font-size: 13px; }
+    .btn-block { width: 100%; }
+    .btn-icon { background: none; border: none; cursor: pointer; font-size: 20px; padding: 8px; border-radius: 50%; }
+    .btn-icon:hover { background: rgba(0,0,0,0.05); }
+    input, select, textarea { width: 100%; padding: 12px 16px; border: 2px solid #E0E0E0; border-radius: var(--radius-sm); font-size: 14px; transition: border-color 0.2s; background: #fff; }
+    input:focus, select:focus, textarea:focus { border-color: var(--primary); outline: none; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #616161; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+    .badge-success { background: #E8F5E9; color: #2E7D32; }
+    .badge-warning { background: #FFF8E1; color: #F57F17; }
+    .badge-error { background: #FFEBEE; color: #C62828; }
+    .badge-info { background: #E3F2FD; color: #1565C0; }
+    .flex { display: flex; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    .text-center { text-align: center; }
+    .mt-1 { margin-top: 8px; }
+    .mb-1 { margin-bottom: 8px; }
+    .mb-2 { margin-bottom: 16px; }
+    .sales-app { max-width: 100%; margin: 0 auto; min-height: 100vh; background: #F5F5F5; padding-bottom: 80px; }
+    .sales-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--primary); color: #fff; position: sticky; top: 0; z-index: 50; }
+    .sales-header h3 { font-size: 16px; font-weight: 600; }
+    .sales-content { padding: 16px; }
+    .sales-card { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; margin-bottom: 12px; }
+    .sales-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .kpi-card { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; text-align: center; }
+    .kpi-card .kpi-value { font-size: 22px; font-weight: 800; color: var(--primary); margin-top: 4px; }
+    .kpi-card .kpi-label { font-size: 11px; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; max-width: 100%; margin: 0 auto; background: #fff; display: flex; border-top: 1px solid #E0E0E0; z-index: 100; padding-bottom: env(safe-area-inset-bottom, 0); }
+    .bottom-nav .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 4px; cursor: pointer; font-size: 10px; color: #9E9E9E; transition: color 0.2s; min-height: 44px; }
+    .bottom-nav .nav-item .nav-icon { font-size: 20px; margin-bottom: 2px; }
+    .bottom-nav .nav-item.active { color: var(--primary); }
+    .bottom-nav .nav-item.active .nav-icon { color: var(--primary); }
+    @media (max-width: 480px) { .sales-content { padding: 12px; } }
+    @media (min-width: 768px) {
+      .sales-app { max-width: 800px; margin: 0 auto; border-left: 1px solid #E0E0E0; border-right: 1px solid #E0E0E0; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+      .sales-content { padding: 24px; }
+      .sales-kpi-grid { grid-template-columns: repeat(4, 1fr); gap: 14px; }
+      .kpi-card .kpi-value { font-size: 26px; }
+      .kpi-card { padding: 20px; }
+      .sales-card { padding: 20px; margin-bottom: 16px; }
+      .bottom-nav { max-width: 800px; margin: 0 auto; left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; border: 1px solid #E0E0E0; border-bottom: none; }
+    }
+    @media (min-width: 1200px) {
+      .sales-app { max-width: 960px; }
+      .bottom-nav { max-width: 960px; }
+      .sales-content { padding: 32px; }
+      .sales-kpi-grid { gap: 16px; }
+    }
+    body.dark .sales-app{background:#121212}
+    body.dark .bottom-nav{background:#1E1E1E;border-top:1px solid #333}
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="sales-app">
+    <header class="sales-header">
+      <button class="btn-icon" onclick="toggleMenu()">☰</button>
+      <h3>Halo, <span id="salesName"></span>!</h3>
+      <button class="btn-icon" onclick="showNotif()">🔔</button>
+    </header>
+    <div class="sales-content" id="salesContent"></div>
+    <nav class="bottom-nav">
+      <div class="nav-item active" id="nav-dashboard" onclick="navigate('dashboard')">
+        <span class="nav-icon">📊</span><span>Dashboard</span>
+      </div>
+      <div class="nav-item" id="nav-toko" onclick="navigate('toko')">
+        <span class="nav-icon">🏪</span><span>Toko</span>
+      </div>
+      <div class="nav-item" id="nav-kunjungan" onclick="navigate('kunjungan')">
+        <span class="nav-icon">👣</span><span>Kunjungan</span>
+      </div>
+      <div class="nav-item" id="nav-pembayaran" onclick="navigate('pembayaran')">
+        <span class="nav-icon">💰</span><span>Bayar</span>
+      </div>
+      <div class="nav-item" id="nav-akun" onclick="navigate('akun')">
+        <span class="nav-icon">👤</span><span>Akun</span>
+      </div>
+    </nav>
+  </div>
+
+  <div id="modalOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center;" onclick="if(event.target===this)closeModal()">
+    <div style="background:#fff;border-radius:16px;padding:24px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto;" onclick="event.stopPropagation()">
+      <div class="flex-between mb-2">
+        <h3 id="modalTitle" style="font-size:18px;"></h3>
+        <button class="btn-icon" onclick="closeModal()">✕</button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="toastContainer" style="position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;"></div>
+
+  <script>
+    var USER = JSON.parse(sessionStorage.getItem('seblak_user') || '{}');
+    var TOKEN = sessionStorage.getItem('seblak_token');
+    if (!TOKEN) window.location.href = '?page=login';
+    document.getElementById('salesName').textContent = USER.full_name || USER.sales_name || 'Sales';
+
+    function showToast(message, type) {
+      type = type || 'info';
+      var colors = { success: '#2E7D32', warning: '#F9A825', error: '#C62828', info: '#1565C0' };
+      var icons = { success: '✅', warning: '⚠️', error: '❌', info: 'ℹ️' };
+      var container = document.getElementById('toastContainer');
+      var toast = document.createElement('div');
+      toast.style.cssText = 'background:' + (colors[type] || '#333') + ';color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.15);display:flex;align-items:center;gap:8px;animation:slideIn 0.3s ease;max-width:360px;';
+      toast.innerHTML = (icons[type] || 'ℹ️') + ' ' + message;
+      container.appendChild(toast);
+      setTimeout(function() { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(function() { toast.remove(); }, 300); }, 3000);
+    }
+
+    function openModal(title, html) {
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalBody').innerHTML = html;
+      document.getElementById('modalOverlay').style.display = 'flex';
+    }
+    function closeModal() {
+      document.getElementById('modalOverlay').style.display = 'none';
+    }
+
+    function showLoading(container) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:#9E9E9E;"><div style="font-size:32px;margin-bottom:12px;">⏳</div><div>Memuat data...</div></div>';
+    }
+
+    function showEmpty(container, message, actionHtml) {
+      container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#9E9E9E;"><div style="font-size:48px;margin-bottom:16px;">📭</div><div style="font-size:16px;margin-bottom:8px;">' + (message || 'Belum ada data') + '</div>' + (actionHtml || '') + '</div>';
+    }
+
+    function getStatusBadge(status) {
+      var map = {
+        'OPEN': '<span class="badge badge-warning">OPEN</span>',
+        'PARTIAL': '<span class="badge badge-info">PARTIAL</span>',
+        'PAID': '<span class="badge badge-success">PAID</span>',
+        'LUNAS': '<span class="badge badge-success">LUNAS</span>',
+        'BELUM BAYAR': '<span class="badge badge-warning">BELUM BAYAR</span>',
+        'AKTIF': '<span class="badge badge-success">AKTIF</span>',
+        'NONAKTIF': '<span class="badge badge-error">NONAKTIF</span>',
+        'SUSPEND': '<span class="badge badge-error">SUSPEND</span>',
+        'DRAFT': '<span class="badge badge-warning">DRAFT</span>',
+        'COMPLETED': '<span class="badge badge-success">COMPLETED</span>',
+        'READY': '<span class="badge badge-info">READY</span>'
+      };
+      return map[status] || '<span class="badge">' + status + '</span>';
+    }
+
+    function formatRupiah(num) {
+      if (!num) return 'Rp 0';
+      return 'Rp ' + num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+
+    function api(action, params, callback) {
+      params = params || {};
+      params.action = action;
+      params.token = TOKEN;
+      google.script.run
+        .withSuccessHandler(callback)
+        .withFailureHandler(function(err) { showToast('Error: ' + err.message, 'error'); })
+        .handleApi(JSON.stringify(params));
+    }
+
+    function apiWithLoading(action, params, callback, loadingMsg) {
+      showToast(loadingMsg || 'Memproses...', 'info');
+      api(action, params, function(result) {
+        if (result.success) { showToast(result.message || 'Berhasil!', 'success'); if (callback) callback(result); }
+        else { showToast(result.message || 'Gagal!', 'error'); }
+      });
+    }
+
+    function toggleMenu() {}
+    function showNotif() {}
+
+    var pages = {
+      dashboard: { title: 'Dashboard', icon: '📊', render: renderDashboard },
+      toko: { title: 'Toko', icon: '🏪', render: renderToko },
+      kunjungan: { title: 'Kunjungan', icon: '👣', render: renderKunjungan },
+      pembayaran: { title: 'Bayar', icon: '💰', render: renderPembayaran },
+      akun: { title: 'Akun', icon: '👤', render: renderAkun }
+    };
+
+    function navigate(page) {
+      document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
+      var nav = document.getElementById('nav-' + page);
+      if (nav) nav.classList.add('active');
+      if (pages[page]) pages[page].render();
+    }
+
+    function logout() {
+      google.script.run
+        .withSuccessHandler(function() { sessionStorage.clear(); window.location.href = '?page=login'; })
+        .destroySession(TOKEN);
+    }
+
+    function kpiCardSales(label, value, icon) {
+      return '<div class="kpi-card"><div style="font-size:24px;">' + icon + '</div><div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
+    }
+
+    function renderDashboard() {
+      var container = document.getElementById('salesContent');
+      showLoading(container);
+      api('getSalesDashboard', {}, function(result) {
+        if (!result.success) { container.innerHTML = '<p>Error loading dashboard</p>'; return; }
+        var d = result.data.kpi;
+        var pct = d.persentase || 0;
+        var barColor = pct >= 100 ? '#2E7D32' : (pct >= 50 ? '#FF6F00' : '#C62828');
+        var html = '';
+        html += '<div class="sales-card"><div class="flex-between"><span style="font-size:13px;color:#757575;">Target Bulanan</span><span style="font-size:13px;font-weight:700;">' + formatRupiah(d.target_bulanan) + '</span></div>';
+        html += '<div class="flex-between mt-1"><span style="font-size:22px;font-weight:800;color:#C62828;">' + formatRupiah(d.pencapaian) + '</span><span style="font-size:13px;color:#757575;">' + pct + '%</span></div>';
+        html += '<div style="height:8px;background:#E0E0E0;border-radius:4px;margin-top:8px;overflow:hidden;"><div style="height:100%;width:' + Math.min(pct,100) + '%;background:' + barColor + ';border-radius:4px;transition:width 0.5s;"></div></div></div>';
+        html += '<div class="sales-kpi-grid">';
+        html += kpiCardSales('Omzet Bulan Ini', formatRupiah(d.omzet_bulan_ini), '📈');
+        html += kpiCardSales('Toko Aktif', d.toko_aktif + ' toko', '🏪');
+        html += kpiCardSales('Kunjungan Hari Ini', d.kunjungan_hari_ini + 'x', '👣');
+        html += kpiCardSales('Piutang Area', formatRupiah(d.piutang_area), '💳');
+        html += '</div>';
+        html += '<div class="sales-card"><div class="flex-between"><span style="font-weight:700;">Invoice Belum Lunas</span><span class="badge badge-warning">' + (d.invoice_belum_lunas||0) + '</span></div>';
+        html += '<div style="font-size:24px;font-weight:800;color:#C62828;margin-top:4px;">' + formatRupiah(d.piutang_area) + '</div></div>';
+        html += '<div class="sales-card"><div class="flex-between"><span style="font-weight:700;">Komisi Saya</span></div>';
+        html += '<div class="flex-between mt-1"><span style="color:#757575;">Siap Cair:</span><span style="font-weight:700;color:#2E7D32;">' + formatRupiah(d.komisi_ready) + '</span></div>';
+        html += '<div class="flex-between"><span style="color:#757575;">Sudah Cair:</span><span style="font-weight:700;">' + formatRupiah(d.komisi_paid) + '</span></div></div>';
+        html += '<div class="sales-card"><div class="flex-between"><span style="font-weight:700;">Ranking Sales</span><span style="font-size:24px;font-weight:800;color:#FF6F00;">#' + (d.ranking||'-') + '</span></div>';
+        html += '<div style="font-size:13px;color:#757575;">dari ' + (d.total_sales||0) + ' sales</div></div>';
+        container.innerHTML = html;
+      });
+    }
+
+    function renderToko() {
+      var c = document.getElementById('salesContent');
+      showLoading(c);
+      api('getCustomers', {}, function(r) {
+        if (!r.success) return;
+        var html = '<h3 style="margin-bottom:12px;">🏪 Daftar Toko Saya</h3>';
+        (r.data||[]).forEach(function(cu) {
+          html += '<div class="sales-card" onclick="startVisit(\'' + cu.customer_id + '\')" style="cursor:pointer;">';
+          html += '<div class="flex-between"><strong>' + cu.store_name + '</strong>' + getStatusBadge(cu.status) + '</div>';
+          html += '<div style="font-size:13px;color:#757575;margin-top:4px;">' + (cu.owner_name||'-') + ' • ' + (cu.kota||'-') + '</div>';
+          html += '<div class="flex-between mt-1"><span style="font-size:12px;color:#757575;">Kunjungan: ' + (cu.visit_count||0) + 'x</span><span style="font-size:12px;color:#757575;">Piutang: ' + formatRupiah(cu.total_piutang) + '</span></div>';
+          html += '</div>';
+        });
+        if (r.data.length === 0) showEmpty(c, 'Belum ada toko yang ditugaskan');
+        else c.innerHTML = html;
+      });
+    }
+
+    function renderKunjungan() {
+      var c = document.getElementById('salesContent');
+      var html = '<h3 style="margin-bottom:12px;">👣 Kunjungan Baru</h3>';
+      html += '<p style="color:#757575;margin-bottom:16px;">Pilih toko dari daftar atau scan untuk memulai kunjungan.</p>';
+      html += '<div class="sales-card" style="text-align:center;padding:40px 20px;">';
+      html += '<div style="font-size:48px;margin-bottom:12px;">📸</div>';
+      html += '<p style="margin-bottom:16px;">Scan barcode atau pilih toko dari menu Toko</p>';
+      html += '<button class="btn btn-primary btn-block" onclick="navigate(\'toko\')">Pilih Toko</button>';
+      html += '</div>';
+      c.innerHTML = html;
+    }
+
+    function renderPembayaran() {
+      var c = document.getElementById('salesContent');
+      showLoading(c);
+      api('getPiutang', {status: 'OPEN'}, function(r) {
+        if (!r.success) return;
+        var html = '<h3 style="margin-bottom:12px;">💰 Pembayaran</h3>';
+        (r.data||[]).forEach(function(p) {
+          html += '<div class="sales-card" style="cursor:pointer;">';
+          html += '<div class="flex-between"><strong>Invoice: ' + p.invoice_id + '</strong>' + getStatusBadge(p.status) + '</div>';
+          html += '<div style="font-size:13px;color:#757575;margin-top:4px;">Customer: ' + p.customer_id + '</div>';
+          html += '<div class="flex-between mt-1"><span>Sisa: <strong>' + formatRupiah(p.sisa_piutang) + '</strong></span><span style="font-size:12px;color:#757575;">Umur: ' + (p.umur_piutang||0) + ' hari</span></div>';
+          html += '</div>';
+        });
+        if (r.data.length === 0) showEmpty(c, 'Semua piutang sudah lunas!');
+        else c.innerHTML = html;
+      });
+    }
+
+    function renderAkun() {
+      var c = document.getElementById('salesContent');
+      c.innerHTML = '<h3 style="margin-bottom:12px;">👤 Akun Saya</h3>' +
+        '<div class="sales-card">' +
+        '<div style="text-align:center;margin-bottom:16px;"><div style="font-size:64px;">👤</div></div>' +
+        '<div class="flex-between"><span style="color:#757575;">Nama</span><span style="font-weight:700;">' + (USER.full_name || '-') + '</span></div>' +
+        '<div class="flex-between mt-1"><span style="color:#757575;">Username</span><span>' + (USER.username || '-') + '</span></div>' +
+        '<div class="flex-between mt-1"><span style="color:#757575;">Role</span><span class="badge badge-info">' + (USER.role || '-') + '</span></div>' +
+        '<button class="btn btn-outline btn-block mt-2" onclick="logout()">Keluar</button>' +
+        '</div>';
+    }
+
+    function startVisit(customerId) {
+      window.location.href = '?page=visit&customer=' + customerId;
+    }
+
+    navigate('dashboard');
+  </script>
+</body>
+</html>

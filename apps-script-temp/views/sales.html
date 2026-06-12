@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Seblak Sales</title>
+  <?!= include('css/main'); ?>
+  <?!= include('css/sales'); ?>
+</head>
+<body>
+  <div class="sales-app">
+    <header class="sales-header">
+      <button class="btn-icon" onclick="toggleMenu()">☰</button>
+      <h3>Halo, <span id="salesName"></span>!</h3>
+      <button class="btn-icon" onclick="showNotif()">🔔</button>
+    </header>
+
+    <div class="sales-content" id="salesContent">
+      <!-- Dynamic content -->
+    </div>
+
+    <?!= include('components/bottomnav'); ?>
+  </div>
+
+  <?!= include('components/modal'); ?>
+  <?!= include('components/toast'); ?>
+
+  <script>
+    var USER = JSON.parse(sessionStorage.getItem('seblak_user') || '{}');
+    var TOKEN = sessionStorage.getItem('seblak_token');
+
+    if (!TOKEN) window.location.href = '?page=login';
+    document.getElementById('salesName').textContent = USER.full_name || USER.sales_name || 'Sales';
+
+    var pages = {
+      dashboard: { title: 'Dashboard', icon: '📊', render: renderDashboard },
+      toko: { title: 'Toko', icon: '🏪', render: renderToko },
+      kunjungan: { title: 'Kunjungan', icon: '👣', render: renderKunjungan },
+      pembayaran: { title: 'Bayar', icon: '💰', render: renderPembayaran },
+      akun: { title: 'Akun', icon: '👤', render: renderAkun }
+    };
+
+    function navigate(page) {
+      document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
+      var nav = document.getElementById('nav-' + page);
+      if (nav) nav.classList.add('active');
+      if (pages[page]) pages[page].render();
+    }
+
+    function logout() {
+      google.script.run
+        .withSuccessHandler(function() {
+          sessionStorage.clear();
+          window.location.href = '?page=login';
+        })
+        .destroySession(TOKEN);
+    }
+
+    function api(action, params, callback) {
+      params = params || {};
+      params.action = action;
+      params.token = TOKEN;
+      google.script.run
+        .withSuccessHandler(callback)
+        .withFailureHandler(function(err) { showToast('Error: ' + err.message, 'error'); })
+        .doPost(JSON.stringify(params));
+    }
+
+    navigate('dashboard');
+  </script>
+  <script>
+    <?!= include('js/api'); ?>
+    <?!= include('js/utils'); ?>
+    <?!= include('js/dashboard-sales'); ?>
+  </script>
+</body>
+</html>
