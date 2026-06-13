@@ -20,6 +20,11 @@ var KomisiService = {
     var bulan = tglInvoice.getMonth() + 1;
     var tahun = tglInvoice.getFullYear();
 
+    // Check if commission already exists for this invoice
+    var existing = getDataAsObjects('22_KOMISI');
+    var dup = existing.filter(function(k) { return k.invoice_id === invoiceId; });
+    if (dup.length > 0) return respond(false, 'Komisi sudah ada untuk invoice ini', null);
+
     var komisiSheet = getSheet('22_KOMISI');
     var komisiId = 'KMS-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd') +
       '-' + ('000' + (komisiSheet.getLastRow())).slice(-3);
@@ -29,6 +34,7 @@ var KomisiService = {
       totalInvoice, rate, komisi, bulan, tahun, 'READY', '', new Date(), new Date()
     ]);
 
+    clearDataCache();
     logActivity(session.user_id, 'CREATE', 'KOMISI', komisiId,
       'Komisi: Rp ' + komisi + ' untuk sales ' + salesId, null, { invoice_id: invoiceId, komisi: komisi });
 
@@ -81,6 +87,7 @@ var KomisiService = {
       }
     });
 
+    clearDataCache();
     logActivity(session.user_id, 'UPDATE', 'KOMISI', komisiIds.join(','),
       'Pencairan komisi: Rp ' + totalCair, null, { komisi_ids: komisiIds });
 

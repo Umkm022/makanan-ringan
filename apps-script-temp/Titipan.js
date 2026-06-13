@@ -38,6 +38,10 @@ var TitipanService = {
       var gudangData = stokSheet.getDataRange().getValues();
       for (var i = 1; i < gudangData.length; i++) {
         if (gudangData[i][1] === item.produk_id) {
+          var available = (gudangData[i][3] || 0) - (gudangData[i][4] || 0);
+          if (item.qty > available) {
+            return respond(false, 'Stok ' + item.produk_id + ' tidak mencukupi. Tersedia: ' + available + ', diminta: ' + item.qty, null);
+          }
           var qtyKeluar = (gudangData[i][4] || 0) + item.qty;
           var qtySisa = (gudangData[i][3] || 0) - qtyKeluar;
           stokSheet.getRange(i+1, 5).setValue(qtyKeluar);
@@ -73,6 +77,7 @@ var TitipanService = {
     });
 
     logActivity(session.user_id, 'CREATE', 'TITIP', titipId, 'Titip barang: ' + totalQty + ' items', null, data);
+    clearDataCache();
     return respond(true, 'Barang berhasil dititipkan', { titip_id: titipId });
   },
 
@@ -95,6 +100,7 @@ var TitipanService = {
       if (result && result.success) count++;
     });
     logActivity(session.user_id, 'CREATE', 'BULK_TITIP', count + ' customers', 'Bulk titip ke ' + count + ' customer', null, data);
+    clearDataCache();
     return respond(true, 'Berhasil titip ke ' + count + ' customer', { count: count });
   }
 };

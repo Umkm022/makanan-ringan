@@ -795,6 +795,7 @@ function buildTabs(role){
     tabs.push({id:'titipan',label:'Titipan',icon:'📤'});
     tabs.push({id:'biaya',label:'Biaya',icon:'💸'});
     tabs.push({id:'komisi',label:'Komisi',icon:'🏆'});
+    tabs.push({id:'rekening',label:'Rekening',icon:'🏦'});
     tabs.push({id:'laporan',label:'Laporan',icon:'📈'});
     tabs.push({id:'map',label:'Peta',icon:'🗺️'});
     tabs.push({id:'setup-data',label:'Setup',icon:'⚙️'});
@@ -852,7 +853,7 @@ function activateTab(id){
   // Update page title
   var titleEl=document.getElementById('pageTitle');
   if(titleEl){
-    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','customer':'👥 Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','stok-produksi':'🏭 Stok','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
+    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','customer':'👥 Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','stok-produksi':'🏭 Stok','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','rekening':'🏦 Rekening','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
     titleEl.textContent=labels[id]||'📊 Dashboard';
   }
 }
@@ -917,7 +918,7 @@ function getCacheKey(page){
   var map = {
     'dashboard':'dashboard','produk':'produk','customer':'customer','sales-list':'salesList',
     'kunjungan':'kunjungan','invoice':'invoice','stok-produksi':'stokProduksi','titipan':'titipan',
-    'biaya':'biaya','komisi':'komisi','laporan':'laporan','map':'map','setup-data':'setup',
+    'biaya':'biaya','komisi':'komisi','rekening':'rekening','laporan':'laporan','map':'map','setup-data':'setup',
     'visit':'visit','history':'history','stok-sales':'stokSales','profile':'profile','log-viewer':'logs'
   };
   return map[page] || page;
@@ -963,8 +964,8 @@ function afterPageLoad(id){
   else if(id==='stok-sales')initStokSales();
    else if(id==='sales-list')initSalesList();
    else if(id==='biaya')initBiaya();
-    else if(id==='komisi')initKomisi();
-    else if(id==='rekening')initRekening();
+   else if(id==='komisi')initKomisi();
+   else if(id==='rekening')initRekening();
    else if(id==='map')initMap();
    else if(id==='profile')showProfile();
    else if(id==='log-viewer')showLogViewer();
@@ -1084,22 +1085,6 @@ function loadProdukDropdown(selectId, selectedValue, callback) {
     if (r.success) setCached('produk', r);
     if (selectId) populateSelect(selectId, (r.data||[]), 'produk_id', 'nama_produk', 'nama', selectedValue, 'Semua Produk');
     if (callback) callback();
-  });
-}
-
-function loadRekeningDropdown(selectId, selectedValue, callback) {
-  api('getRekening', {}, function(r) {
-    var data = (r.data || []).filter(function(rek) { return rek.is_active === 'TRUE'; });
-    if (selectId) {
-      var el = document.getElementById(selectId);
-      if (el) {
-        el.innerHTML = '<option value="">Pilih Rekening</option>';
-        data.forEach(function(rek) {
-          el.innerHTML += '<option value="' + rek.rekening_id + '"' + (rek.rekening_id === selectedValue ? ' selected' : '') + '>' + rek.nama_bank + ' - ' + rek.no_rekening + ' (' + rek.atas_nama + ')' + '</option>';
-        });
-      }
-    }
-    if (callback) callback(data);
   });
 }
 
@@ -1741,10 +1726,12 @@ function showKunjRiwayat(){
 
 function buildRiwayatTable(data){
   if(!data||data.length===0)return'<div class="card"><p style="color:var(--text-light)">Belum ada kunjungan.</p></div>';
-  var html='<div class="table-wrap"><table><thead><tr><th>Waktu</th><th>Customer</th><th>Sales</th><th>Durasi</th><th>Status</th><th>Total</th><th>Lokasi</th><th></th></tr></thead><tbody>';
+  var html='<div class="table-wrap"><table><thead><tr><th>Waktu</th><th>Customer</th><th>Sales</th><th>Durasi</th><th>Status</th><th>Total</th><th>Lokasi</th></tr></thead><tbody>';
   data.forEach(function(k){
     var tgl=k.tanggal_kunjungan?k.tanggal_kunjungan.substring(0,10):'';
     var st=k.status||'';
+    var labelStatus={'COMPLETED':'Selesai','CANCELLED':'Batal','DRAFT':'Draft'}[st]||st;
+    var badgeClass={'COMPLETED':'badge-success','CANCELLED':'badge-cancelled','DRAFT':'badge-warning'}[st]||'';
     var nm=k.customer_name||k.customer_id||'';
     var jamMulai=ft(k.waktu_mulai);
     var jamSelesai=ft(k.waktu_selesai);
@@ -1757,11 +1744,10 @@ function buildRiwayatTable(data){
     }
     var fotoBtn='';
     if(k.foto_toko&&k.foto_toko!=='[]'&&k.foto_toko!=='""')fotoBtn='<span style="cursor:pointer;font-size:14px" onclick="lihatFoto(\''+k.kunjungan_id+'\')">📷</span>';
-    var labelStatus=st==='COMPLETED'?'Selesai':(st==='CANCELLED'?'Batal':st);
     var aksi='';
-    if (st==='DRAFT') aksi='<button class="btn btn-sm btn-danger" onclick="cancelDraft(\''+k.kunjungan_id+'\')" style="font-size:10px;padding:2px 6px">✕</button>';
-    else if (st==='COMPLETED') aksi='<button class="btn btn-sm btn-danger" onclick="cancelCompleted(\''+k.kunjungan_id+'\')" style="font-size:10px;padding:2px 6px" title="Batalkan kunjungan">✕ Batal</button>';
-    html+='<tr><td>'+waktu+'</td><td>'+nm+'</td><td>'+(k.sales_name||k.sales_id||'')+'</td><td>'+d+'</td><td>'+labelStatus+'</td><td>Rp '+fmt(k.total_invoice||0)+'</td><td>'+lokasi+' '+fotoBtn+'</td><td>'+aksi+'</td></tr>';
+    if (st==='DRAFT') aksi='<button class="btn btn-sm btn-danger" onclick="cancelKunjungan(\''+k.kunjungan_id+'\')" style="font-size:10px;padding:2px 6px">✕ Batal</button>';
+    if (st==='COMPLETED') aksi='<button class="btn btn-sm btn-danger" onclick="cancelKunjungan(\''+k.kunjungan_id+'\')" style="font-size:10px;padding:2px 6px">✕ Batal</button>';
+    html+='<tr><td>'+waktu+'</td><td>'+nm+'</td><td>'+(k.sales_name||k.sales_id||'')+'</td><td>'+d+'</td><td><span class="badge '+badgeClass+'">'+labelStatus+'</span></td><td>Rp '+fmt(k.total_invoice||0)+'</td><td>'+lokasi+' '+fotoBtn+' '+aksi+'</td></tr>';
   });
   html+='</tbody></table></div>';
   return html;
@@ -2460,7 +2446,7 @@ function showStokKonsinyasi(){
       html+='<div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
       data.forEach(function(s){
         html+='<tr><td>'+(s.customer_name||s.customer_id||'')+'</td><td>'+(s.sales_name||s.sales_id||'')+'</td><td>'+(s.produk_nama||s.produk_id||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td>';
-        html+='<td><button class="btn btn-sm btn-outline" onclick="editStokKonsinyasi(\''+s.stok_konsinyasi_id+'\','+(s.qty_titip_awal||0)+','+(s.qty_terjual||0)+','+(s.qty_retur||0)+','+(s.qty_sisa||0)+')" style="font-size:10px;padding:2px 6px">Edit</button> ';
+        html+='<td><button class="btn btn-sm btn-outline" onclick="editStokKonsinyasi(\''+s.stok_konsinyasi_id+'\','+(s.qty_titip_awal||0)+','+(s.qty_terjual||0)+','+(s.qty_retur||0)+','+(s.qty_sisa||0)+',\''+((s.target_display||0))+'……'+'\')" style="font-size:10px;padding:2px 6px">Edit</button> ';
         html+='<button class="btn btn-sm btn-danger" onclick="hapusStokKonsinyasi(\''+s.stok_konsinyasi_id+'\')" style="font-size:10px;padding:2px 6px">Hapus</button></td>';
         html+='</tr>';
       });
@@ -2471,12 +2457,13 @@ function showStokKonsinyasi(){
   });
 }
 
-function editStokKonsinyasi(id, titip, terjual, retur, sisa) {
+function editStokKonsinyasi(id, titip, terjual, retur, sisa, targetDisplay) {
   var html='<div class="card"><h4>Edit Stok Konsinyasi</h4>';
-  html+='<div class="form-group"><label>Qty Titip Awal</label><input type="number" id="editKonsTitip" value="'+titip+'" min="0"></div>';
-  html+='<div class="form-group"><label>Terjual</label><input type="number" id="editKonsTerjual" value="'+terjual+'" min="0"></div>';
-  html+='<div class="form-group"><label>Retur</label><input type="number" id="editKonsRetur" value="'+retur+'" min="0"></div>';
-  html+='<div class="form-group"><label>Sisa Fisik</label><input type="number" id="editKonsSisa" value="'+sisa+'" min="0"></div>';
+  html+='<div class="form-group"><label>Qty Titip Awal</label><input type="number" id="editKonTitip" value="'+titip+'" min="0"></div>';
+  html+='<div class="form-group"><label>Qty Terjual</label><input type="number" id="editKonTerjual" value="'+terjual+'" min="0"></div>';
+  html+='<div class="form-group"><label>Qty Retur</label><input type="number" id="editKonRetur" value="'+retur+'" min="0"></div>';
+  html+='<div class="form-group"><label>Qty Sisa</label><input type="number" id="editKonSisa" value="'+sisa+'" min="0"></div>';
+  html+='<div class="form-group"><label>Target Display</label><input type="number" id="editKonTarget" value="'+(targetDisplay||0)+'" min="0"></div>';
   html+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" onclick="simpanEditStokKonsinyasi(\''+id+'\')">Simpan</button>';
   html+='<button class="btn btn-outline" onclick="showStokKonsinyasi()">Batal</button></div></div>';
   document.getElementById('stokContent').innerHTML=html;
@@ -2484,10 +2471,11 @@ function editStokKonsinyasi(id, titip, terjual, retur, sisa) {
 
 function simpanEditStokKonsinyasi(id) {
   var data={
-    qty_titip:parseFloat(document.getElementById('editKonsTitip').value)||0,
-    qty_terjual:parseFloat(document.getElementById('editKonsTerjual').value)||0,
-    qty_retur:parseFloat(document.getElementById('editKonsRetur').value)||0,
-    qty_sisa:parseFloat(document.getElementById('editKonsSisa').value)||0
+    qty_titip:parseFloat(document.getElementById('editKonTitip').value)||0,
+    qty_terjual:parseFloat(document.getElementById('editKonTerjual').value)||0,
+    qty_retur:parseFloat(document.getElementById('editKonRetur').value)||0,
+    qty_sisa:parseFloat(document.getElementById('editKonSisa').value)||0,
+    target_display:parseFloat(document.getElementById('editKonTarget').value)||0
   };
   api('updateStokKonsinyasi',{id:id,data:data},function(r){
     if(!r.success){toast('❌ '+r.message);return}
@@ -2847,7 +2835,7 @@ function initVisit() {
         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #E0E0E0">';
         html += '<span>' + tgl + ' — <strong>' + (k.customer_id || '') + '</strong></span>';
         html += '<div><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')">Lanjutkan</button> ';
-        html += '<button class="btn btn-sm btn-danger" onclick="cancelDraft(\'' + k.kunjungan_id + '\')">✕ Batal</button></div>';
+        html += '<button class="btn btn-sm btn-danger" onclick="cancelKunjungan(\'' + k.kunjungan_id + '\')">✕ Batal</button></div>';
         html += '</div>';
       });
       html += '</div></div>';
@@ -2878,36 +2866,22 @@ function resumeDraft(kunjunganId) {
   });
 }
 
-async function cancelDraft(kunjunganId) {
-  var ok = await confirmModal('Yakin ingin menghapus kunjungan draft ini?');
-  if (!ok) return;
-  api('cancelKunjungan', { kunjunganId: kunjunganId }, function(r) {
-    if (r.success) {
-      toast('✅ ' + (r.message || 'Kunjungan dibatalkan'));
-      invalidateCache('dashboard');
-      if (CURRENT_PAGE === 'visit') initVisit();
-      else if (CURRENT_PAGE === 'history') initRiwayatSales(true);
-      else if (CURRENT_PAGE === 'dashboard') initSalesDashboard(true);
-      else if (CURRENT_PAGE === 'kunjungan') showKunjRiwayat();
-    } else {
-      toast('❌ ' + (r.message || 'Gagal'));
-    }
-  });
-}
-
-async function cancelCompleted(kunjunganId) {
-  var ok = await confirmModal('Yakin ingin membatalkan kunjungan ini? Invoice & piutang akan dibatalkan.');
-  if (!ok) return;
-  api('cancelKunjungan', { kunjunganId: kunjunganId }, function(r) {
-    if (r.success) {
-      toast('✅ ' + (r.message || 'Kunjungan dibatalkan'));
-      invalidateCache('dashboard');
-      if (CURRENT_PAGE === 'kunjungan') showKunjRiwayat();
-      else if (CURRENT_PAGE === 'history') initRiwayatSales(true);
-      else if (CURRENT_PAGE === 'visit') initVisit();
-    } else {
-      toast('❌ ' + (r.message || 'Gagal'));
-    }
+function cancelKunjungan(kunjunganId) {
+  confirmModal('Yakin ingin membatalkan kunjungan ini?').then(function(ok) {
+    if (!ok) return;
+    api('cancelKunjungan', { kunjunganId: kunjunganId }, function(r) {
+      if (r.success) {
+        toast('✅ Kunjungan dibatalkan');
+        invalidateCache('dashboard');
+        if (CURRENT_PAGE === 'visit') initVisit();
+        else if (CURRENT_PAGE === 'history') initRiwayatSales(true);
+        else if (CURRENT_PAGE === 'dashboard') initSalesDashboard(true);
+        else if (CURRENT_PAGE === 'stok') showStokGudang();
+        else filterRiwayatKunj();
+      } else {
+        toast('❌ ' + (r.message || 'Gagal'));
+      }
+    });
   });
 }
 
@@ -2936,12 +2910,13 @@ function initRiwayatSales() {
       }
       var fotoBtn='';
       if(k.foto_toko&&k.foto_toko!=='[]'&&k.foto_toko!=='""')fotoBtn='<span style="cursor:pointer;font-size:14px" onclick="lihatFoto(\''+k.kunjungan_id+'\')">📷</span>';
-      var labelStatus=st==='COMPLETED'?'Selesai':(st==='CANCELLED'?'Batal':st);
-      html += '<tr><td>' + waktu + '</td><td>' + (k.customer_id || '') + '</td><td>' + d + '</td><td>' + labelStatus + '</td><td>Rp ' + fmt(k.total_invoice || 0) + '</td><td>' + lokasi + ' ' + fotoBtn + '</td>';
+      var labelStatus={'COMPLETED':'Selesai','CANCELLED':'Batal','DRAFT':'Draft'}[st]||st;
+      var badgeClass={'COMPLETED':'badge-success','CANCELLED':'badge-cancelled','DRAFT':'badge-warning'}[st]||'';
+      html += '<tr><td>' + waktu + '</td><td>' + (k.customer_id || '') + '</td><td>' + d + '</td><td><span class="badge ' + badgeClass + '">' + labelStatus + '</span></td><td>Rp ' + fmt(k.total_invoice || 0) + '</td><td>' + lokasi + ' ' + fotoBtn + '</td>';
       if (st === 'DRAFT') {
-        html += '<td><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')">Lanjutkan</button> <button class="btn btn-sm btn-danger" onclick="cancelDraft(\'' + k.kunjungan_id + '\')">✕</button></td>';
+        html += '<td><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')">Lanjutkan</button> <button class="btn btn-sm btn-danger" onclick="cancelKunjungan(\'' + k.kunjungan_id + '\')">✕ Batal</button></td>';
       } else if (st === 'COMPLETED') {
-        html += '<td><button class="btn btn-sm btn-danger" onclick="cancelCompleted(\'' + k.kunjungan_id + '\')">✕ Batal</button></td>';
+        html += '<td><button class="btn btn-sm btn-danger" onclick="cancelKunjungan(\'' + k.kunjungan_id + '\')">✕ Batal</button></td>';
       } else {
         html += '<td></td>';
       }

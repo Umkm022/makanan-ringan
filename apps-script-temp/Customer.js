@@ -12,6 +12,13 @@ var CustomerService = {
     if (params && params.status) {
       all = all.filter(function(c) { return c.status === params.status; });
     }
+    // Join sales name
+    var sales = getDataAsObjects('02_SALES');
+    all = all.map(function(c) {
+      var s = sales.filter(function(sa) { return sa.sales_id === c.sales_id; })[0] || {};
+      c.sales_name = s.full_name || s.nama || (c.sales_id || '');
+      return c;
+    });
     return respond(true, '', all);
   },
 
@@ -53,6 +60,7 @@ var CustomerService = {
     ];
     sheet.appendRow(row);
     logActivity(session.user_id, 'CREATE', 'CUSTOMER', newId, 'Tambah customer: ' + data.store_name, null, data);
+    clearDataCache();
     return respond(true, 'Customer berhasil ditambahkan', { customer_id: newId });
   },
 
@@ -62,6 +70,10 @@ var CustomerService = {
     if (row < 0) return respond(false, 'Customer tidak ditemukan', null);
 
     var existing = sheet.getRange(row, 1, 1, 22).getValues()[0];
+    if (session.role === 'SALES') {
+      var salesId = getSalesIdFromSession(session);
+      if (existing[2] !== salesId) return respond(false, 'Akses ditolak: bukan customer Anda', null);
+    }
     var newRow = [
       id, data.group_id || existing[1], data.sales_id || existing[2],
       data.store_name || existing[3], data.owner_name || existing[4],
@@ -75,12 +87,28 @@ var CustomerService = {
     ];
     sheet.getRange(row, 1, 1, 22).setValues([newRow]);
     logActivity(session.user_id, 'UPDATE', 'CUSTOMER', id, 'Update customer: ' + data.store_name, existing, newRow);
+    clearDataCache();
     return respond(true, 'Customer berhasil diupdate', null);
+  },
+
+  deleteCustomer: function(id, session) {
+    if (session.role !== 'OWNER' && session.role !== 'ADMIN') {
+      return respond(false, 'Hanya owner/admin yang bisa menghapus customer', null);
+    }
+    var sheet = getSheet('04_CUSTOMERS');
+    var row = findRow('04_CUSTOMERS', 0, id);
+    if (row < 0) return respond(false, 'Customer tidak ditemukan', null);
+    sheet.deleteRow(row);
+    clearDataCache();
+    logActivity(session.user_id, 'DELETE', 'CUSTOMER', id, 'Hapus customer: ' + id, null, null);
+    return respond(true, 'Customer berhasil dihapus', null);
   }
 };
 
 function getSalesIdFromSession(session) {
+  if (!session || !session.user_id) return '';
   var sheet = getSheet('02_SALES');
+  if (!sheet) return '';
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][1] === session.user_id) return data[i][0];

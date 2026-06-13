@@ -60,3 +60,149 @@ function renderCustomer() {
     c.innerHTML = html;
   });
 }
+
+function renderKunjungan() {
+  var c = document.getElementById('contentBody');
+  showLoading(c);
+
+  var salesData = [];
+  api('getSales', {}, function(salesResult) {
+    salesData = salesResult.data || [];
+  });
+
+  api('getAllKunjungan', {}, function(result) {
+    if (!result.success) { c.innerHTML = '<p>Gagal memuat data kunjungan</p>'; return; }
+    var visits = result.data || [];
+
+    var html = '';
+    html += '<h3 class="mb-2">🚗 Monitoring Kunjungan Sales</h3>';
+
+    html += '<div class="card mb-2" style="padding:12px">';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">';
+    html += '<div class="form-group" style="flex:1;min-width:140px;margin-bottom:0"><label style="font-size:11px">Sales</label><select id="filterSales" style="padding:8px 10px;font-size:12px">';
+    html += '<option value="">Semua Sales</option>';
+    salesData.forEach(function(s) {
+      html += '<option value="' + s.sales_id + '">' + (s.full_name || s.sales_id) + '</option>';
+    });
+    html += '</select></div>';
+    html += '<div class="form-group" style="flex:1;min-width:130px;margin-bottom:0"><label style="font-size:11px">Dari</label><input type="date" id="filterDateFrom" style="padding:8px 10px;font-size:12px"></div>';
+    html += '<div class="form-group" style="flex:1;min-width:130px;margin-bottom:0"><label style="font-size:11px">Sampai</label><input type="date" id="filterDateTo" style="padding:8px 10px;font-size:12px"></div>';
+    html += '<div class="form-group" style="flex:1;min-width:110px;margin-bottom:0"><label style="font-size:11px">Status</label><select id="filterStatus" style="padding:8px 10px;font-size:12px"><option value="">Semua</option><option value="DRAFT">DRAFT</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select></div>';
+    html += '<button class="btn btn-primary btn-sm" onclick="applyFilterKunjungan()" style="min-height:36px;padding:8px 16px">🔍 Filter</button>';
+    html += '</div></div>';
+
+    var totalVisits = visits.length;
+    var completedVisits = visits.filter(function(v) { return v.status === 'COMPLETED'; }).length;
+    var draftVisits = visits.filter(function(v) { return v.status === 'DRAFT'; }).length;
+    var cancelledVisits = visits.filter(function(v) { return v.status === 'CANCELLED'; }).length;
+
+    html += '<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">';
+    html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:800;color:#C62828">' + totalVisits + '</div><div style="font-size:11px;color:#757575">Total Kunjungan</div></div>';
+    html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:800;color:#2E7D32">' + completedVisits + '</div><div style="font-size:11px;color:#757575">Selesai</div></div>';
+    html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:800;color:#FF6F00">' + draftVisits + '</div><div style="font-size:11px;color:#757575">Draft</div></div>';
+    html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:800;color:#9E9E9E">' + cancelledVisits + '</div><div style="font-size:11px;color:#757575">Batal</div></div>';
+    html += '</div>';
+
+    html += '<div class="card" style="padding:0;overflow-x:auto">';
+    html += '<table style="font-size:12px"><thead><tr><th>Tanggal</th><th>Sales</th><th>Toko</th><th>Status</th><th>Terjual</th><th>Invoice</th><th>Lokasi</th><th></th></tr></thead><tbody>';
+    visits.forEach(function(v) {
+      var tgl = v.tanggal_kunjungan ? formatDateShort(v.tanggal_kunjungan) : '-';
+      var statusBadge = v.status === 'COMPLETED' ? '<span style="background:#E8F5E9;color:#2E7D32;padding:2px 8px;border-radius:4px;font-size:11px">Selesai</span>' : (v.status === 'CANCELLED' ? '<span style="background:#F5F5F5;color:#9E9E9E;padding:2px 8px;border-radius:4px;font-size:11px">Batal</span>' : '<span style="background:#FFF3E0;color:#FF6F00;padding:2px 8px;border-radius:4px;font-size:11px">Draft</span>');
+      var lokasi = v.latitude && v.longitude ? '<a href="https://www.google.com/maps?q=' + v.latitude + ',' + v.longitude + '" target="_blank" style="text-decoration:none">📍</a>' : '-';
+      html += '<tr>';
+      html += '<td>' + tgl + '</td>';
+      html += '<td><strong>' + (v.sales_name || '-') + '</strong></td>';
+      html += '<td>' + (v.store_name || '-') + '</td>';
+      html += '<td>' + statusBadge + '</td>';
+      html += '<td>' + (v.total_terjual || 0) + '</td>';
+      html += '<td>' + formatRupiah(v.total_invoice) + '</td>';
+      html += '<td style="text-align:center">' + lokasi + '</td>';
+      html += '<td><button class="btn btn-sm btn-outline" onclick="detailKunjungan(\'' + v.kunjungan_id + '\')" style="padding:4px 10px;font-size:11px">Detail</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    html += '</div>';
+
+    c.innerHTML = html;
+  });
+}
+
+function applyFilterKunjungan() {
+  var params = {};
+  var salesId = document.getElementById('filterSales').value;
+  var dateFrom = document.getElementById('filterDateFrom').value;
+  var dateTo = document.getElementById('filterDateTo').value;
+  var status = document.getElementById('filterStatus').value;
+
+  if (salesId) params.sales_id = salesId;
+  if (dateFrom) params.date_from = dateFrom;
+  if (dateTo) params.date_to = dateTo;
+  if (status) params.status = status;
+
+  var c = document.getElementById('contentBody');
+  showLoading(c);
+
+  api('getAllKunjungan', params, function(result) {
+    if (!result.success) { c.innerHTML = '<p>Gagal memuat data</p>'; return; }
+    var visits = result.data || [];
+    var html = '<h3 class="mb-2">🚗 Monitoring Kunjungan Sales</h3>';
+    html += '<div class="card" style="padding:0;overflow-x:auto"><table style="font-size:12px"><thead><tr><th>Tanggal</th><th>Sales</th><th>Toko</th><th>Status</th><th>Terjual</th><th>Invoice</th><th>Lokasi</th><th></th></tr></thead><tbody>';
+    visits.forEach(function(v) {
+      var tgl = v.tanggal_kunjungan ? formatDateShort(v.tanggal_kunjungan) : '-';
+      var statusBadge = v.status === 'COMPLETED' ? '<span style="background:#E8F5E9;color:#2E7D32;padding:2px 8px;border-radius:4px;font-size:11px">Selesai</span>' : (v.status === 'CANCELLED' ? '<span style="background:#F5F5F5;color:#9E9E9E;padding:2px 8px;border-radius:4px;font-size:11px">Batal</span>' : '<span style="background:#FFF3E0;color:#FF6F00;padding:2px 8px;border-radius:4px;font-size:11px">Draft</span>');
+      var lokasi = v.latitude && v.longitude ? '<a href="https://www.google.com/maps?q=' + v.latitude + ',' + v.longitude + '" target="_blank" style="text-decoration:none">📍</a>' : '-';
+      html += '<tr>';
+      html += '<td>' + tgl + '</td>';
+      html += '<td><strong>' + (v.sales_name || '-') + '</strong></td>';
+      html += '<td>' + (v.store_name || '-') + '</td>';
+      html += '<td>' + statusBadge + '</td>';
+      html += '<td>' + (v.total_terjual || 0) + '</td>';
+      html += '<td>' + formatRupiah(v.total_invoice) + '</td>';
+      html += '<td style="text-align:center">' + lokasi + '</td>';
+      html += '<td><button class="btn btn-sm btn-outline" onclick="detailKunjungan(\'' + v.kunjungan_id + '\')" style="padding:4px 10px;font-size:11px">Detail</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    c.innerHTML = html;
+  });
+}
+
+function detailKunjungan(kunjunganId) {
+  showToast('Memuat detail...', 'info');
+  api('getKunjunganData', {kunjunganId: kunjunganId}, function(r) {
+    if (!r.success) { showToast('Gagal memuat detail', 'error'); return; }
+    var d = r.data;
+    var html = '<div class="card"><div class="flex-between"><h3>Detail Kunjungan</h3><button class="btn btn-sm btn-outline" onclick="renderKunjungan()" style="padding:4px 10px">← Kembali</button></div>';
+    html += '<div style="margin:12px 0"><table style="font-size:13px"><tr><td style="font-weight:600;width:120px">ID</td><td>' + (d.kunjungan_id || '-') + '</td></tr>';
+    html += '<tr><td style="font-weight:600">Tanggal</td><td>' + formatDate(d.tanggal) + '</td></tr>';
+    var labelStatus=d.status==='COMPLETED'?'Selesai':(d.status==='CANCELLED'?'Batal':(d.status||'-'));
+    html += '<tr><td style="font-weight:600">Status</td><td>' + labelStatus + (d.status==='COMPLETED'?' <button class="btn btn-sm btn-danger" onclick="cancelCompleted(\''+d.kunjungan_id+'\')" style="font-size:10px;padding:2px 6px">✕ Batal</button>':'') + '</td></tr>';
+    html += '<tr><td style="font-weight:600">Total Terjual</td><td>' + (d.total_terjual || 0) + ' pcs</td></tr>';
+    html += '<tr><td style="font-weight:600">Total Retur</td><td>' + (d.total_retur || 0) + ' pcs</td></tr>';
+    html += '<tr><td style="font-weight:600">Total Invoice</td><td>' + formatRupiah(d.total_invoice) + '</td></tr>';
+    var lokasiLink = d.latitude && d.longitude ? '<a href="https://www.google.com/maps?q=' + d.latitude + ',' + d.longitude + '" target="_blank">📍 Lihat di Maps</a>' : '-';
+    html += '<tr><td style="font-weight:600">Lokasi GPS</td><td>' + lokasiLink + '</td></tr>';
+    html += '<tr><td style="font-weight:600">Catatan</td><td>' + (d.notes || '-') + '</td></tr>';
+    html += '</table></div>';
+
+    if (d.details && d.details.length > 0) {
+      html += '<h4 style="margin:12px 0 8px">Detail Produk</h4>';
+      html += '<table style="font-size:12px"><thead><tr><th>Produk</th><th>Stok Awal</th><th>Sisa</th><th>Rusak</th><th>Retur</th><th>Terjual</th><th>Restock</th><th>Subtotal</th></tr></thead><tbody>';
+      d.details.forEach(function(det) {
+        html += '<tr><td>' + (det.produk_id || '-') + '</td><td>' + (det.stok_awal || 0) + '</td><td>' + (det.sisa_fisik || 0) + '</td><td>' + (det.rusak || 0) + '</td><td>' + (det.retur || 0) + '</td><td><strong>' + (det.terjual || 0) + '</strong></td><td>' + (det.rekomendasi_restock || 0) + '</td><td>' + formatRupiah(det.subtotal) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    document.getElementById('contentBody').innerHTML = html;
+  });
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return '-';
+  var d = new Date(dateStr);
+  var dd = ('0' + d.getDate()).slice(-2);
+  var mm = ('0' + (d.getMonth()+1)).slice(-2);
+  var yyyy = d.getFullYear();
+  return dd + '/' + mm + '/' + yyyy;
+}

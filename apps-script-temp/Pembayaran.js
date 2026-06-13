@@ -67,6 +67,7 @@ var PembayaranService = {
       KomisiService.hitungKomisi(invoiceId, session);
     }
 
+    clearDataCache();
     logActivity(session.user_id, 'CREATE', 'PEMBAYARAN', bayarId,
       'Pembayaran: Rp ' + jumlahBayar + ' untuk ' + invoiceId, null, data);
 

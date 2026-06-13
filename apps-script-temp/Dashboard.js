@@ -28,9 +28,17 @@ var DashboardService = {
       }
     });
 
-    // Laba kotor (total from invoice details)
+    // Filter invoice details to current month only for laba calculation
     var labaKotor = 0;
-    details.forEach(function(d) { labaKotor += d.laba_kotor || 0; });
+    details.forEach(function(d) {
+      var inv = invoices.filter(function(i) { return i.invoice_id === d.invoice_id; })[0];
+      if (inv) {
+        var invDate = new Date(inv.tanggal_invoice);
+        if (invDate >= startOfMonth && invDate <= endOfMonth) {
+          labaKotor += d.laba_kotor || 0;
+        }
+      }
+    });
 
     // Piutang aktif
     var piutangAktif = 0;
@@ -59,8 +67,29 @@ var DashboardService = {
       }
     });
 
+    // Retur cost bulan ini
+    var returCost = 0;
+    if (typeof KasService !== 'undefined' && KasService.hitungTotalReturCost) {
+      returCost = KasService.hitungTotalReturCost();
+    }
+
+    // Saldo kas total
+    var saldoKas = 0;
+    try {
+      var rekenings = getDataAsObjects('36_REKENING');
+      var transaksi = getDataAsObjects('37_KAS_TRANSAKSI');
+      rekenings.forEach(function(r) {
+        if (r.is_active !== 'FALSE') {
+          var trx = transaksi.filter(function(t) { return t.rekening_id === r.rekening_id; });
+          var totalMasuk = trx.filter(function(t) { return t.tipe === 'DEBIT'; }).reduce(function(s, t) { return s + (parseFloat(t.jumlah) || 0); }, 0);
+          var totalKeluar = trx.filter(function(t) { return t.tipe === 'CREDIT'; }).reduce(function(s, t) { return s + (parseFloat(t.jumlah) || 0); }, 0);
+          saldoKas += (parseFloat(r.saldo_awal) || 0) + totalMasuk - totalKeluar;
+        }
+      });
+    } catch(e) { saldoKas = 0; }
+
     // Laba bersih
-    var labaBersih = labaKotor - biayaBulanIni - komisiBulanIni;
+    var labaBersih = labaKotor - biayaBulanIni - komisiBulanIni - returCost;
 
     // Top products
     var produkTerjual = {};
@@ -100,7 +129,9 @@ var DashboardService = {
         stok_gudang: totalStokGudang,
         stok_konsinyasi: totalStokKonsinyasi,
         biaya_bulan_ini: biayaBulanIni,
-        komisi_bulan_ini: komisiBulanIni
+        komisi_bulan_ini: komisiBulanIni,
+        retur_cost_bulan_ini: returCost,
+        saldo_kas: saldoKas
       },
       top_produk: topProduk,
       top_sales: topSales,

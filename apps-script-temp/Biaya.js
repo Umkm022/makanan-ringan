@@ -14,15 +14,6 @@ var BiayaService = {
       data.notes || '', session.user_id, now
     ]);
 
-    // Catat ke kas transaksi jika ada rekening_id
-    if (data.rekening_id) {
-      KasService.catatTransaksi(
-        data.rekening_id, 'CREDIT', 'BIAYA_' + (data.kategori || 'OPERASIONAL'), data.jumlah,
-        now, 'Biaya: ' + data.deskripsi,
-        biayaId, 'BIAYA', session.user_id
-      );
-    }
-
     logActivity(session.user_id, 'CREATE', 'BIAYA', biayaId,
       'Biaya: ' + data.deskripsi + ' Rp ' + data.jumlah, null, data);
     clearDataCache();

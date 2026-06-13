@@ -44,6 +44,7 @@ var ProduksiService = {
     }
 
     logActivity(session.user_id, 'CREATE', 'PRODUKSI', prodId, 'Produksi: ' + data.qty_produksi + ' ' + data.produk_id, null, data);
+    clearDataCache();
     return respond(true, 'Produksi berhasil dicatat', { produksi_id: prodId, batch: batch });
   },
 

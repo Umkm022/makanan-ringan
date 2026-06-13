@@ -122,6 +122,7 @@ var KunjunganService = {
       headerSheet.getRange(headerRow, 10).setValue(totalInvoice);
     }
 
+    clearDataCache();
     return respond(true, 'Data stok berhasil disimpan', {
       total_terjual: totalTerjual,
       total_retur: totalRetur,
@@ -198,12 +199,20 @@ var KunjunganService = {
     logActivity(session.user_id, 'CREATE', 'KUNJUNGAN', kunjunganId,
       'Kunjungan selesai: ' + invoiceTotal + ' invoice', null, header);
 
+    var allProduk = getDataAsObjects('06_PRODUK');
+    var restockItems = details.filter(function(d) { return d.rekomendasi_restock > 0; }).map(function(d) {
+      var p = allProduk.filter(function(pr) { return pr.produk_id === d.produk_id; })[0] || {};
+      return { produk_id: d.produk_id, produk_nama: p.nama_produk || d.produk_id, qty: d.rekomendasi_restock };
+    });
+
+    clearDataCache();
     return respond(true, 'Kunjungan berhasil difinalisasi', {
       kunjungan_id: kunjunganId,
       invoice_id: invoiceId,
       total_terjual: header[7],
       total_invoice: invoiceTotal,
-      has_restock_recommendation: details.some(function(d) { return d.rekomendasi_restock > 0; })
+      has_restock_recommendation: restockItems.length > 0,
+      restock_items: restockItems
     });
   },
 
@@ -384,11 +393,14 @@ var KunjunganService = {
       customer_id: header[1],
       sales_id: header[2],
       tanggal: header[3],
+      waktu_mulai: header[4],
+      waktu_selesai: header[5],
       status: header[6],
       total_terjual: header[7],
       total_retur: header[8],
       total_invoice: header[9],
       notes: header[10],
+      foto_toko: header[11],
       latitude: header[12],
       longitude: header[13],
       details: details
@@ -401,5 +413,389 @@ var KunjunganService = {
     return respond(true, '', filtered.sort(function(a, b) {
       return new Date(b.tanggal_kunjungan) - new Date(a.tanggal_kunjungan);
     }));
+  },
+
+  getRiwayatSales: function(session) {
+    var all = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var salesId = getSalesIdFromSession(session);
+    if (salesId) {
+      all = all.filter(function(k) { return k.sales_id === salesId; });
+    }
+    all.sort(function(a, b) {
+      return new Date(b.tanggal_kunjungan) - new Date(a.tanggal_kunjungan);
+    });
+    return respond(true, '', all);
+  },
+
+  getAllRiwayatKunjungan: function(params) {
+    var all = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var customers = getDataAsObjects('04_CUSTOMERS');
+    var sales = getDataAsObjects('02_SALES');
+    if (params && params.salesId) {
+      all = all.filter(function(k) { return k.sales_id === params.salesId; });
+    }
+    all = all.map(function(k) {
+      var c = customers.filter(function(cu) { return cu.customer_id === k.customer_id; })[0] || {};
+      var s = sales.filter(function(sa) { return sa.sales_id === k.sales_id; })[0] || {};
+      k.customer_name = c.store_name || c.nama || k.customer_id;
+      k.sales_name = s.full_name || s.nama || k.sales_id;
+      return k;
+    });
+    all.sort(function(a, b) {
+      return new Date(b.tanggal_kunjungan) - new Date(a.tanggal_kunjungan);
+    });
+    return respond(true, '', all);
+  },
+
+  getAllKunjungan: function(params, session) {
+    if (session.role !== 'OWNER' && session.role !== 'ADMIN') {
+      return respond(false, 'Akses ditolak', null);
+    }
+    var all = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var salesList = getDataAsObjects('02_SALES');
+    var customers = getDataAsObjects('04_CUSTOMERS');
+
+    var salesMap = {};
+    salesList.forEach(function(s) { salesMap[s.sales_id] = s.full_name; });
+    var custMap = {};
+    customers.forEach(function(c) { custMap[c.customer_id] = c.store_name; });
+
+    if (params) {
+      if (params.sales_id) {
+        all = all.filter(function(v) { return v.sales_id === params.sales_id; });
+      }
+      if (params.status) {
+        all = all.filter(function(v) { return v.status === params.status; });
+      }
+      if (params.date_from) {
+        var from = new Date(params.date_from);
+        all = all.filter(function(v) { return new Date(v.tanggal_kunjungan) >= from; });
+      }
+      if (params.date_to) {
+        var to = new Date(params.date_to);
+        to.setDate(to.getDate() + 1);
+        all = all.filter(function(v) { return new Date(v.tanggal_kunjungan) <= to; });
+      }
+    }
+
+    var result = all.sort(function(a, b) {
+      return new Date(b.tanggal_kunjungan) - new Date(a.tanggal_kunjungan);
+    }).map(function(v) {
+      return {
+        kunjungan_id: v.kunjungan_id,
+        customer_id: v.customer_id,
+        store_name: custMap[v.customer_id] || v.customer_id,
+        sales_id: v.sales_id,
+        sales_name: salesMap[v.sales_id] || v.sales_id,
+        tanggal_kunjungan: v.tanggal_kunjungan,
+        waktu_mulai: v.waktu_mulai,
+        waktu_selesai: v.waktu_selesai,
+        status: v.status,
+        total_terjual: v.total_terjual || 0,
+        total_retur: v.total_retur || 0,
+        total_invoice: v.total_invoice || 0,
+        notes: v.notes,
+        latitude: v.latitude,
+        longitude: v.longitude,
+        has_restock: v.has_restock
+      };
+    });
+
+    return respond(true, '', result);
+  },
+
+  restockFromKunjungan: function(kunjunganId, session) {
+    var headerSheet = getSheet('14_KUNJUNGAN_HEADER');
+    var headerRow = findRow('14_KUNJUNGAN_HEADER', 0, kunjunganId);
+    if (headerRow < 0) return respond(false, 'Kunjungan tidak ditemukan', null);
+
+    var header = headerSheet.getRange(headerRow, 1, 1, 17).getValues()[0];
+    var customerId = header[1];
+    var salesId = header[2];
+    var status = header[6];
+    if (status !== 'COMPLETED') return respond(false, 'Kunjungan harus difinalisasi dulu', null);
+
+    // Get detail items with restock recommendation
+    var detailSheet = getSheet('15_KUNJUNGAN_DETAIL');
+    var detailData = detailSheet.getDataRange().getValues();
+    var items = [];
+    for (var i = 1; i < detailData.length; i++) {
+      if (detailData[i][1] === kunjunganId) {
+        var rekomendasi = detailData[i][9];
+        if (rekomendasi > 0) {
+          items.push({ produk_id: detailData[i][2], qty: rekomendasi });
+        }
+      }
+    }
+
+    if (items.length === 0) return respond(false, 'Tidak ada rekomendasi restock', null);
+
+    // Get sales_id from customer if needed
+    var custSheet = getSheet('04_CUSTOMERS');
+    var custRow = findRow('04_CUSTOMERS', 0, customerId);
+    if (custRow > 0) {
+      salesId = custSheet.getRange(custRow, 3).getValue() || salesId;
+    }
+
+    // Simulate session for TitipanService
+    var titipSession = session;
+    if (!titipSession.sales_id) titipSession.sales_id = salesId;
+
+    return TitipanService.createTitip({
+      customer_id: customerId,
+      sales_id: salesId,
+      tipe: 'RESTOCK',
+      items: items,
+      notes: 'Restock otomatis dari kunjungan ' + kunjunganId
+    }, titipSession);
+  },
+
+  getDraftKunjungan: function(session) {
+    var all = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var salesId = getSalesIdFromSession(session);
+    if (salesId) all = all.filter(function(k) { return k.sales_id === salesId; });
+    all = all.filter(function(k) { return k.status === 'DRAFT'; });
+    all.sort(function(a,b) { return new Date(b.tanggal_kunjungan) - new Date(a.tanggal_kunjungan); });
+    return respond(true, '', all);
+  },
+
+  resumeKunjungan: function(kunjunganId, session) {
+    var result = this.getKunjunganData(kunjunganId, session);
+    if (!result.success) return result;
+    var data = result.data;
+    if (!data || data.status !== 'DRAFT') return respond(false, 'Kunjungan bukan DRAFT', null);
+
+    // Get customer info
+    var custSheet = getSheet('04_CUSTOMERS');
+    var custRow = findRow('04_CUSTOMERS', 0, data.customer_id);
+    var customer = null;
+    if (custRow > 0) {
+      var c = custSheet.getRange(custRow, 1, 1, 22).getValues()[0];
+      customer = { customer_id: c[0], store_name: c[3], owner_name: c[4], address: c[6], kota: c[7] };
+    }
+
+    // Build produk with stock info from details
+    var allProdukResume = getDataAsObjects('06_PRODUK');
+    var produk = data.details.map(function(d) {
+      var pr = allProdukResume.filter(function(p) { return p.produk_id === d.produk_id; })[0] || {};
+      return {
+        produk_id: d.produk_id,
+        nama_produk: pr.nama_produk || d.produk_id,
+        stok_awal: d.stok_awal,
+        sisa_fisik: d.sisa_fisik,
+        rusak: d.rusak,
+        retur: d.retur,
+        terjual: d.terjual,
+        target_display: d.target_display,
+        rekomendasi_restock: d.rekomendasi_restock,
+        harga_jual: d.harga_jual
+      };
+    });
+
+    return respond(true, '', {
+      kunjungan_id: data.kunjungan_id,
+      customer: customer,
+      produk: produk,
+      last_visit: data.tanggal
+    });
+  },
+
+  cancelKunjungan: function(kunjunganId, session) {
+    var headerSheet = getSheet('14_KUNJUNGAN_HEADER');
+    var headerRow = findRow('14_KUNJUNGAN_HEADER', 0, kunjunganId);
+    if (headerRow < 0) return respond(false, 'Kunjungan tidak ditemukan', null);
+    var status = headerSheet.getRange(headerRow, 7).getValue();
+    var salesId = headerSheet.getRange(headerRow, 3).getValue();
+    if (session.role === 'SALES') {
+      var sId = getSalesIdFromSession(session);
+      if (salesId !== sId) return respond(false, 'Akses ditolak', null);
+    }
+    if (status === 'DRAFT') {
+      headerSheet.getRange(headerRow, 6).setValue(new Date());
+      headerSheet.getRange(headerRow, 7).setValue('CANCELLED');
+      clearDataCache();
+      logActivity(session.user_id, 'UPDATE', 'KUNJUNGAN', kunjunganId, 'Batalkan kunjungan DRAFT', null, null);
+      return respond(true, 'Kunjungan draft dibatalkan', null);
+    }
+    if (status === 'COMPLETED') {
+      var invoiceTotal = headerSheet.getRange(headerRow, 10).getValue() || 0;
+      if (invoiceTotal > 0) {
+        var invSheet = getSheet('18_INVOICE_HEADER');
+        var invData = invSheet.getDataRange().getValues();
+        for (var i = 1; i < invData.length; i++) {
+          if (invData[i][1] === kunjunganId) {
+            invSheet.getRange(i + 1, 10).setValue('VOID');
+            invSheet.getRange(i + 1, 11).setValue(new Date());
+            var invId = invData[i][0];
+            var pitSheet = getSheet('20_PIUTANG');
+            var pitData = pitSheet.getDataRange().getValues();
+            for (var j = 1; j < pitData.length; j++) {
+              if (pitData[j][1] === invId) {
+                pitSheet.getRange(j + 1, 7).setValue('VOID');
+                pitSheet.getRange(j + 1, 10).setValue(new Date());
+              }
+            }
+            break;
+          }
+        }
+      }
+      headerSheet.getRange(headerRow, 6).setValue(new Date());
+      headerSheet.getRange(headerRow, 7).setValue('CANCELLED');
+      clearDataCache();
+      logActivity(session.user_id, 'UPDATE', 'KUNJUNGAN', kunjunganId, 'Batalkan kunjungan COMPLETED, invoice VOID', null, null);
+      return respond(true, 'Kunjungan dibatalkan, invoice & piutang dibatalkan', null);
+    }
+    return respond(false, 'Kunjungan sudah ' + status + ', tidak bisa dibatalkan', null);
+  },
+
+  getVisitReminders: function(params, session) {
+    var all = getDataAsObjects('04_CUSTOMERS');
+    if (session.role === 'SALES') {
+      var salesId = getSalesIdFromSession(session);
+      all = all.filter(function(c) { return c.sales_id === salesId; });
+    }
+    var sales = getDataAsObjects('02_SALES');
+    var now = new Date();
+    var result = [];
+    all.forEach(function(c) {
+      if (c.status === 'NONAKTIF' || c.status === 'SUSPEND') return;
+      var lastVisit = c.last_visit ? new String(c.last_visit).indexOf('0') > -1 ? null : new Date(c.last_visit) : null;
+      if (c.last_visit) {
+        var ts = new Date(c.last_visit);
+        lastVisit = ts.getTime() > 0 ? ts : null;
+      }
+      var daysSince = lastVisit ? Math.floor((now - lastVisit) / (1000*60*60*24)) : 999;
+      var urgency = daysSince >= 7 ? 'red' : (daysSince >= 3 ? 'yellow' : 'green');
+      var s = sales.filter(function(sa) { return sa.sales_id === c.sales_id; })[0] || {};
+      result.push({
+        customer_id: c.customer_id,
+        store_name: c.store_name || c.nama || '',
+        address: c.address || '',
+        kota: c.kota || '',
+        sales_id: c.sales_id,
+        sales_name: s.full_name || s.nama || c.sales_id || '',
+        latitude: parseFloat(c.latitude) || 0,
+        longitude: parseFloat(c.longitude) || 0,
+        last_visit: c.last_visit || null,
+        days_since_last_visit: daysSince,
+        visit_count: parseInt(c.visit_count) || 0,
+        urgency: urgency
+      });
+    });
+    result.sort(function(a,b) { return b.days_since_last_visit - a.days_since_last_visit; });
+    return respond(true, '', result);
+  },
+
+  getStockPredictions: function(params, session) {
+    var customers = getDataAsObjects('04_CUSTOMERS');
+    var sales = getDataAsObjects('02_SALES');
+    var produkList = getDataAsObjects('06_PRODUK');
+    var stokAll = getDataAsObjects('10_STOK_KONSINYASI');
+    var headers = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var details = getDataAsObjects('15_KUNJUNGAN_DETAIL');
+    var now = new Date();
+    var result = [];
+
+    if (session.role === 'SALES') {
+      var salesId = getSalesIdFromSession(session);
+      customers = customers.filter(function(c) { return c.sales_id === salesId; });
+    }
+
+    customers.forEach(function(cust) {
+      if (cust.status === 'NONAKTIF' || cust.status === 'SUSPEND') return;
+      var custStok = stokAll.filter(function(s) { return s.customer_id === cust.customer_id; });
+      if (custStok.length === 0) return;
+
+      var custVisits = headers.filter(function(h) {
+        return h.customer_id === cust.customer_id && h.status === 'COMPLETED';
+      }).sort(function(a,b) { return new Date(a.tanggal_kunjungan) - new Date(b.tanggal_kunjungan); });
+
+      custStok.forEach(function(s) {
+        var prod = produkList.filter(function(p) { return p.produk_id === s.produk_id; })[0] || {};
+        var qtySisa = parseInt(s.qty_sisa) || 0;
+        if (qtySisa <= 0) return;
+
+        var prodDetails = details.filter(function(d) {
+          return d.produk_id === s.produk_id && custVisits.some(function(v) { return v.kunjungan_id === d.kunjungan_id; });
+        });
+
+        var totalTerjual = 0;
+        var firstDate = null;
+        var lastDate = null;
+        prodDetails.forEach(function(d) {
+          var terjual = parseInt(d.terjual) || 0;
+          totalTerjual += terjual;
+          if (terjual > 0) {
+            var hv = custVisits.filter(function(v) { return v.kunjungan_id === d.kunjungan_id; })[0];
+            if (hv) {
+              var dt = new Date(hv.tanggal_kunjungan);
+              if (!firstDate || dt < firstDate) firstDate = dt;
+              if (!lastDate || dt > lastDate) lastDate = dt;
+            }
+          }
+        });
+
+        var daysSpan = 0;
+        if (firstDate && lastDate && firstDate.getTime() !== lastDate.getTime()) {
+          daysSpan = Math.max(1, Math.round((lastDate - firstDate) / (1000*60*60*24)));
+        } else if (firstDate && lastDate) {
+          daysSpan = 1;
+        }
+
+        var dailyAvg = daysSpan > 0 ? totalTerjual / daysSpan : 0;
+        var daysUntilEmpty = dailyAvg > 0 ? Math.round(qtySisa / dailyAvg) : 999;
+        var status = 'aman';
+        if (daysUntilEmpty <= 3) status = 'kritis';
+        else if (daysUntilEmpty <= 7) status = 'warning';
+
+        if (status !== 'aman' || daysUntilEmpty <= 14) {
+          var sObj = sales.filter(function(sa) { return sa.sales_id === cust.sales_id; })[0] || {};
+          result.push({
+            customer_id: cust.customer_id,
+            store_name: cust.store_name || cust.nama || '',
+            sales_name: sObj.full_name || sObj.nama || cust.sales_id || '',
+            produk_id: s.produk_id,
+            produk_name: prod.nama_produk || s.produk_id,
+            qty_sisa: qtySisa,
+            target_display: parseInt(s.target_display) || 0,
+            daily_avg_sales: Math.round(dailyAvg * 10) / 10,
+            days_until_empty: daysUntilEmpty,
+            status: status
+          });
+        }
+      });
+    });
+
+    result.sort(function(a,b) { return a.days_until_empty - b.days_until_empty; });
+    return respond(true, '', result);
+  },
+
+  uploadFotoToko: function(kunjunganId, fileName, fileData, session, tipe, lat, lng) {
+    if (!kunjunganId) return respond(false, 'Kunjungan ID wajib', null);
+    try {
+      var folderName = 'Foto_Toko_Kunjungan';
+      var folders = DriveApp.getFoldersByName(folderName);
+      var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+      var blob = Utilities.newBlob(fileData, 'image/jpeg', fileName || 'foto_toko.jpg');
+      var file = folder.createFile(blob);
+      var fileUrl = file.getUrl();
+      var headerSheet = getSheet('14_KUNJUNGAN_HEADER');
+      var headerRow = findRow('14_KUNJUNGAN_HEADER', 0, kunjunganId);
+      if (headerRow > 0) {
+        var entry = { url: fileUrl };
+        if (lat && lng) { entry.lat = parseFloat(lat); entry.lng = parseFloat(lng); }
+        var existing = headerSheet.getRange(headerRow, 12).getValue() || '[]';
+        var arr = [];
+        try { arr = JSON.parse(existing); } catch(e) { arr = existing ? [{ url: existing }] : []; }
+        if (!Array.isArray(arr)) arr = [{ url: arr }];
+        if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); }
+        else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
+        headerSheet.getRange(headerRow, 12).setValue(JSON.stringify(arr));
+        logActivity(session.user_id, 'UPDATE', 'KUNJUNGAN', kunjunganId, 'Upload foto ' + (tipe||'sebelum'), null, { foto_url: fileUrl, tipe: tipe, lat: lat, lng: lng });
+      }
+      return respond(true, 'Foto berhasil diupload', { url: fileUrl });
+    } catch (e) {
+      return respond(false, 'Gagal upload: ' + e.message, null);
+    }
   }
 };

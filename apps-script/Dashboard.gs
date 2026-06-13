@@ -67,8 +67,33 @@ var DashboardService = {
       }
     });
 
+    // Retur cost bulan ini
+    var returList = getDataAsObjects('16_RETUR');
+    var produkList = getDataAsObjects('06_PRODUK');
+    var returCostBulanIni = 0;
+    returList.forEach(function(r) {
+      var t = new Date(r.tanggal_retur);
+      if (t >= startOfMonth && t <= endOfMonth) {
+        var p = produkList.filter(function(pr) { return pr.produk_id === r.produk_id; })[0] || {};
+        returCostBulanIni += (parseFloat(r.qty_retur) || 0) * (parseFloat(p.hpp) || 0);
+      }
+    });
+
+    // Saldo kas total
+    var rekenings = getDataAsObjects('36_REKENING') || [];
+    var kasTransaksi = getDataAsObjects('37_KAS_TRANSAKSI') || [];
+    var totalSaldoKas = 0;
+    rekenings.forEach(function(r) {
+      if (r.is_active !== 'TRUE') return;
+      var saldo = parseFloat(r.saldo_awal) || 0;
+      kasTransaksi.filter(function(t) { return t.rekening_id === r.rekening_id; }).forEach(function(t) {
+        saldo += t.tipe === 'DEBIT' ? (parseFloat(t.jumlah) || 0) : -(parseFloat(t.jumlah) || 0);
+      });
+      totalSaldoKas += saldo;
+    });
+
     // Laba bersih
-    var labaBersih = labaKotor - biayaBulanIni - komisiBulanIni;
+    var labaBersih = labaKotor - biayaBulanIni - komisiBulanIni - returCostBulanIni;
 
     // Top products
     var produkTerjual = {};
@@ -108,7 +133,9 @@ var DashboardService = {
         stok_gudang: totalStokGudang,
         stok_konsinyasi: totalStokKonsinyasi,
         biaya_bulan_ini: biayaBulanIni,
-        komisi_bulan_ini: komisiBulanIni
+        komisi_bulan_ini: komisiBulanIni,
+        retur_cost_bulan_ini: returCostBulanIni,
+        saldo_kas: totalSaldoKas
       },
       top_produk: topProduk,
       top_sales: topSales,

@@ -447,6 +447,63 @@ var KunjunganService = {
     return respond(true, '', all);
   },
 
+  getAllKunjungan: function(params, session) {
+    if (session.role !== 'OWNER' && session.role !== 'ADMIN') {
+      return respond(false, 'Akses ditolak', null);
+    }
+    var all = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var salesList = getDataAsObjects('02_SALES');
+    var customers = getDataAsObjects('04_CUSTOMERS');
+
+    var salesMap = {};
+    salesList.forEach(function(s) { salesMap[s.sales_id] = s.full_name; });
+    var custMap = {};
+    customers.forEach(function(c) { custMap[c.customer_id] = c.store_name; });
+
+    if (params) {
+      if (params.sales_id) {
+        all = all.filter(function(v) { return v.sales_id === params.sales_id; });
+      }
+      if (params.status) {
+        all = all.filter(function(v) { return v.status === params.status; });
+      }
+      if (params.date_from) {
+        var from = new Date(params.date_from);
+        all = all.filter(function(v) { return new Date(v.tanggal_kunjungan) >= from; });
+      }
+      if (params.date_to) {
+        var to = new Date(params.date_to);
+        to.setDate(to.getDate() + 1);
+        all = all.filter(function(v) { return new Date(v.tanggal_kunjungan) <= to; });
+      }
+    }
+
+    var result = all.sort(function(a, b) {
+      return new Date(b.tanggal_kunjungan) - new Date(a.tanggal_kunjungan);
+    }).map(function(v) {
+      return {
+        kunjungan_id: v.kunjungan_id,
+        customer_id: v.customer_id,
+        store_name: custMap[v.customer_id] || v.customer_id,
+        sales_id: v.sales_id,
+        sales_name: salesMap[v.sales_id] || v.sales_id,
+        tanggal_kunjungan: v.tanggal_kunjungan,
+        waktu_mulai: v.waktu_mulai,
+        waktu_selesai: v.waktu_selesai,
+        status: v.status,
+        total_terjual: v.total_terjual || 0,
+        total_retur: v.total_retur || 0,
+        total_invoice: v.total_invoice || 0,
+        notes: v.notes,
+        latitude: v.latitude,
+        longitude: v.longitude,
+        has_restock: v.has_restock
+      };
+    });
+
+    return respond(true, '', result);
+  },
+
   restockFromKunjungan: function(kunjunganId, session) {
     var headerSheet = getSheet('14_KUNJUNGAN_HEADER');
     var headerRow = findRow('14_KUNJUNGAN_HEADER', 0, kunjunganId);
@@ -548,23 +605,47 @@ var KunjunganService = {
     var headerRow = findRow('14_KUNJUNGAN_HEADER', 0, kunjunganId);
     if (headerRow < 0) return respond(false, 'Kunjungan tidak ditemukan', null);
     var status = headerSheet.getRange(headerRow, 7).getValue();
-    if (status !== 'DRAFT') return respond(false, 'Hanya kunjungan DRAFT yang bisa dibatalkan', null);
     var salesId = headerSheet.getRange(headerRow, 3).getValue();
     if (session.role === 'SALES') {
       var sId = getSalesIdFromSession(session);
       if (salesId !== sId) return respond(false, 'Akses ditolak', null);
     }
-    // Delete detail rows
-    var detailSheet = getSheet('15_KUNJUNGAN_DETAIL');
-    var detailData = detailSheet.getDataRange().getValues();
-    for (var i = detailData.length - 1; i >= 1; i--) {
-      if (detailData[i][1] === kunjunganId) detailSheet.deleteRow(i + 1);
+    if (status === 'DRAFT') {
+      headerSheet.getRange(headerRow, 6).setValue(new Date());
+      headerSheet.getRange(headerRow, 7).setValue('CANCELLED');
+      clearDataCache();
+      logActivity(session.user_id, 'UPDATE', 'KUNJUNGAN', kunjunganId, 'Batalkan kunjungan DRAFT', null, null);
+      return respond(true, 'Kunjungan draft dibatalkan', null);
     }
-    // Delete header
-    headerSheet.deleteRow(headerRow);
-    clearDataCache();
-    logActivity(session.user_id, 'DELETE', 'KUNJUNGAN', kunjunganId, 'Hapus kunjungan DRAFT', null, null);
-    return respond(true, 'Kunjungan draft berhasil dihapus', null);
+    if (status === 'COMPLETED') {
+      var invoiceTotal = headerSheet.getRange(headerRow, 10).getValue() || 0;
+      if (invoiceTotal > 0) {
+        var invSheet = getSheet('18_INVOICE_HEADER');
+        var invData = invSheet.getDataRange().getValues();
+        for (var i = 1; i < invData.length; i++) {
+          if (invData[i][1] === kunjunganId) {
+            invSheet.getRange(i + 1, 10).setValue('VOID');
+            invSheet.getRange(i + 1, 11).setValue(new Date());
+            var invId = invData[i][0];
+            var pitSheet = getSheet('20_PIUTANG');
+            var pitData = pitSheet.getDataRange().getValues();
+            for (var j = 1; j < pitData.length; j++) {
+              if (pitData[j][1] === invId) {
+                pitSheet.getRange(j + 1, 7).setValue('VOID');
+                pitSheet.getRange(j + 1, 10).setValue(new Date());
+              }
+            }
+            break;
+          }
+        }
+      }
+      headerSheet.getRange(headerRow, 6).setValue(new Date());
+      headerSheet.getRange(headerRow, 7).setValue('CANCELLED');
+      clearDataCache();
+      logActivity(session.user_id, 'UPDATE', 'KUNJUNGAN', kunjunganId, 'Batalkan kunjungan COMPLETED, invoice VOID', null, null);
+      return respond(true, 'Kunjungan dibatalkan, invoice & piutang dibatalkan', null);
+    }
+    return respond(false, 'Kunjungan sudah ' + status + ', tidak bisa dibatalkan', null);
   },
 
   getVisitReminders: function(params, session) {

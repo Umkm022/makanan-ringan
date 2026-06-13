@@ -17,10 +17,13 @@ var ReportService = {
       case 'retur':                   return this._retur(params);
       case 'laba_kotor':              return this._labaKotor(params);
       case 'laba_bersih':             return this._labaBersih(params);
+      case 'laba_rugi':               return this._labaRugi(params);
       case 'omzet':                   return this._omzet(params);
       case 'stok_gudang':             return this._stokGudang(params);
       case 'stok_konsinyasi':         return this._stokKonsinyasi(params);
       case 'forecast_restock':        return this._forecastRestock(params);
+      case 'buku_kas':                return this._bukuKas(params);
+      case 'rekap_kas':               return this._rekapKas(params);
       default: return respond(false, 'Tipe report tidak dikenal', null);
     }
   },
@@ -205,18 +208,93 @@ var ReportService = {
     return respond(true, '', Object.values(data).sort(function(a,b) { return a.periode - b.periode; }));
   },
 
-  // 12. Laba Bersih
+  // 12. Laba Bersih (konsisten dengan dashboard)
   _labaBersih: function(params) {
     var details = getDataAsObjects('19_INVOICE_DETAIL');
     var biaya = getDataAsObjects('23_BIAYA_OPERASIONAL') || [];
-    var totalLabaKotor = details.reduce(function(s, d) { return s + (d.laba || 0); }, 0);
+    var komisi = getDataAsObjects('22_KOMISI') || [];
+    var totalPenjualan = details.reduce(function(s, d) { return s + (d.subtotal || 0); }, 0);
+    var totalLabaKotor = details.reduce(function(s, d) { return s + (d.laba_kotor || d.laba || 0); }, 0);
     var totalBiaya = biaya.reduce(function(s, b) { return s + (b.jumlah || 0); }, 0);
+    var totalKomisi = komisi.reduce(function(s, k) { return s + (k.nilai_komisi || 0); }, 0);
+    var totalReturCost = KasService.hitungTotalReturCost();
     return respond(true, '', [{
-      total_penjualan: details.reduce(function(s, d) { return s + (d.subtotal || 0); }, 0),
+      total_penjualan: totalPenjualan,
       total_laba_kotor: totalLabaKotor,
       total_biaya_operasional: totalBiaya,
-      laba_bersih: totalLabaKotor - totalBiaya
+      total_biaya_komisi: totalKomisi,
+      total_biaya_retur: totalReturCost,
+      laba_bersih: totalLabaKotor - totalBiaya - totalKomisi - totalReturCost
     }]);
+  },
+
+  // 12b. Laba Rugi (P&L statement lengkap)
+  _labaRugi: function(params) {
+    var periode = params && params.periode;
+    var invoices = getDataAsObjects('18_INVOICE_HEADER');
+    var detail = getDataAsObjects('19_INVOICE_DETAIL');
+    var biaya = getDataAsObjects('23_BIAYA_OPERASIONAL') || [];
+    var komisi = getDataAsObjects('22_KOMISI') || [];
+    var retur = getDataAsObjects('16_RETUR');
+    var produk = getDataAsObjects('06_PRODUK');
+    var sales = getDataAsObjects('02_SALES');
+    var now = new Date();
+    var bulan = params && params.bulan ? parseInt(params.bulan) : (now.getMonth() + 1);
+    var tahun = params && params.tahun ? parseInt(params.tahun) : now.getFullYear();
+
+    var invFiltered = invoices.filter(function(inv) {
+      var t = new Date(inv.tanggal_invoice);
+      return t.getMonth() + 1 === bulan && t.getFullYear() === tahun;
+    });
+    var invIds = invFiltered.map(function(inv) { return inv.invoice_id; });
+
+    var detFiltered = detail.filter(function(d) { return invIds.indexOf(d.invoice_id) > -1; });
+    var biayaFiltered = biaya.filter(function(b) {
+      var t = new Date(b.tanggal);
+      return t.getMonth() + 1 === bulan && t.getFullYear() === tahun;
+    });
+    var komisiFiltered = komisi.filter(function(k) {
+      return parseInt(k.periode_bulan) === bulan && parseInt(k.periode_tahun) === tahun;
+    });
+    var returFiltered = retur.filter(function(r) {
+      var t = new Date(r.tanggal_retur);
+      return t.getMonth() + 1 === bulan && t.getFullYear() === tahun;
+    });
+
+    var totalPenjualan = detFiltered.reduce(function(s, d) { return s + (d.subtotal || 0); }, 0);
+    var totalHpp = detFiltered.reduce(function(s, d) { return s + ((d.hpp_satuan || 0) * (d.qty || 0)); }, 0);
+    var totalLabaKotor = detFiltered.reduce(function(s, d) { return s + (d.laba_kotor || d.laba || 0); }, 0);
+    var totalBiayaOp = biayaFiltered.reduce(function(s, b) { return s + (b.jumlah || 0); }, 0);
+    var totalKomisi = komisiFiltered.reduce(function(s, k) { return s + (k.nilai_komisi || 0); }, 0);
+    var totalReturCost = 0;
+    returFiltered.forEach(function(r) {
+      var p = produk.filter(function(pr) { return pr.produk_id === r.produk_id; })[0] || {};
+      totalReturCost += (parseFloat(r.qty_retur) || 0) * (parseFloat(p.hpp) || 0);
+    });
+
+    var biayaPerKategori = {};
+    biayaFiltered.forEach(function(b) {
+      var kat = b.kategori || 'LAINNYA';
+      if (!biayaPerKategori[kat]) biayaPerKategori[kat] = 0;
+      biayaPerKategori[kat] += parseFloat(b.jumlah) || 0;
+    });
+
+    return respond(true, '', {
+      periode: bulan + '/' + tahun,
+      pendapatan: {
+        total_penjualan: totalPenjualan,
+        total_hpp: totalHpp,
+        laba_kotor: totalLabaKotor
+      },
+      biaya: {
+        biaya_operasional: totalBiayaOp,
+        biaya_per_kategori: biayaPerKategori,
+        biaya_komisi: totalKomisi,
+        biaya_retur: totalReturCost,
+        total_biaya: totalBiayaOp + totalKomisi + totalReturCost
+      },
+      laba_bersih: totalLabaKotor - totalBiayaOp - totalKomisi - totalReturCost
+    });
   },
 
   // 13. Omzet Report
@@ -265,6 +343,16 @@ var ReportService = {
       var c = customers.filter(function(cu) { return cu.customer_id === s.customer_id; })[0] || {};
       return { stok_id: s.stok_id, customer_id: s.customer_id, customer_nama: c.store_name || c.nama || s.customer_id, produk_id: s.produk_id, produk_nama: p.nama_produk || s.produk_id, qty_titip_awal: s.qty_titip_awal, qty_terjual: s.qty_terjual, qty_retur: s.qty_retur, qty_rusak: s.qty_rusak, qty_sisa: s.qty_sisa, target_display: s.target_display };
     }));
+  },
+
+  // 17. Buku Kas (mutasi per rekening)
+  _bukuKas: function(params) {
+    return KasService.getMutasiRekening(params);
+  },
+
+  // 18. Rekap Kas (saldo per rekening)
+  _rekapKas: function(params) {
+    return KasService.getRekapKas(params);
   },
 
   // 16. Forecast Restock

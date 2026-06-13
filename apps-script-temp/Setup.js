@@ -13,7 +13,7 @@ function setupAll() {
   setupProtectedRanges(ss);
   setupDefaultSettings(ss);
   setupTriggers();
-  SpreadsheetApp.getUi().alert('Setup complete! 35 sheets created.');
+  SpreadsheetApp.getUi().alert('Setup complete! 37 sheets created.');
 }
 
 function createAllSheets(ss) {
@@ -34,6 +34,8 @@ function createAllSheets(ss) {
     // DASHBOARD & REPORT
     '28_DASHBOARD_OWNER', '29_DASHBOARD_SALES',
     '30_REPORT_PENJUALAN', '31_REPORT_PIUTANG', '32_REPORT_KOMISI', '33_REPORT_STOK',
+    // KAS & BANK
+    '36_REKENING', '37_KAS_TRANSAKSI',
     // SYSTEM (hidden sheets)
     '34_SESSION', '35_AUDIT_CONFIG'
   ];
@@ -82,7 +84,9 @@ function setupAllHeaders(ss) {
     '32_REPORT_KOMISI': ['report_id','sales_id','periode','total_komisi','status','generated_at'],
     '33_REPORT_STOK': ['report_id','produk_id','stok_gudang','stok_konsinyasi','total','alert','generated_at'],
     '34_SESSION': ['token','user_id','role','created_at','expiry','ip_address'],
-    '35_AUDIT_CONFIG': ['config_id','key','value','deskripsi','updated_at']
+    '35_AUDIT_CONFIG': ['config_id','key','value','deskripsi','updated_at'],
+    '36_REKENING': ['rekening_id','nama_bank','no_rekening','atas_nama','saldo_awal','saldo_saat_ini','is_active','created_at','updated_at'],
+    '37_KAS_TRANSAKSI': ['transaksi_id','rekening_id','tipe','kategori','jumlah','saldo_sebelum','saldo_setelah','tanggal','keterangan','referensi_id','referensi_tipe','created_by','created_at']
   };
 
   Object.keys(schema).forEach(function(sheetName) {

@@ -40,6 +40,15 @@ var PembayaranService = {
       session.user_id, today, today
     ]);
 
+    // Catat ke kas transaksi jika ada rekening_id
+    if (data.rekening_id && data.metode_bayar === 'TRANSFER') {
+      KasService.catatTransaksi(
+        data.rekening_id, 'DEBIT', 'PEMBAYARAN_PIUTANG', jumlahBayar,
+        today, 'Pembayaran ' + invoiceId + ' dari ' + (data.customer_name || customerId),
+        bayarId, 'PEMBAYARAN', session.user_id
+      );
+    }
+
     // Update piutang
     piutangSheet.getRange(piutangRow, 6).setValue(newSisa);
     piutangSheet.getRange(piutangRow, 7).setValue(newStatus);

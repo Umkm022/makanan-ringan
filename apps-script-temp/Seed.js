@@ -141,14 +141,3 @@ function seedTestData() {
 
   ui.alert('✅ Test data berhasil dibuat!\n\nAkun Sales:\n- andi / andi123\n- budi / budi123\n- cici / cici123\n\nProduk: 5 varian\nCustomer: 5 toko');
 }
-
-function hashPassword(password) {
-  var rawHash = Utilities.computeDigest(
-    Utilities.DigestAlgorithm.SHA_256,
-    password,
-    Utilities.Charset.UTF_8
-  );
-  return rawHash.map(function(b) {
-    return ('0' + (b < 0 ? b + 256 : b).toString(16)).slice(-2);
-  }).join('');
-}

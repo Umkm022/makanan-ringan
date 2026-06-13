@@ -39,6 +39,7 @@ var ProdukService = {
     ];
     sheet.appendRow(row);
     logActivity(session.user_id, 'CREATE', 'PRODUK', newId, 'Tambah produk: ' + data.nama_produk, null, data);
+    clearDataCache();
     return respond(true, 'Produk berhasil ditambahkan', { produk_id: newId });
   },
 
@@ -60,10 +61,36 @@ var ProdukService = {
     ];
     sheet.getRange(row, 1, 1, 17).setValues([newRow]);
     logActivity(session.user_id, 'UPDATE', 'PRODUK', id, 'Update produk: ' + data.nama_produk, existing, newRow);
+    clearDataCache();
     return respond(true, 'Produk berhasil diupdate', null);
+  },
+
+  deleteProduk: function(id, session) {
+    if (session.role !== 'OWNER' && session.role !== 'ADMIN') {
+      return respond(false, 'Hanya owner/admin yang bisa menghapus produk', null);
+    }
+    var sheet = getSheet('06_PRODUK');
+    var row = findRow('06_PRODUK', 0, id);
+    if (row < 0) return respond(false, 'Produk tidak ditemukan', null);
+    sheet.deleteRow(row);
+    logActivity(session.user_id, 'DELETE', 'PRODUK', id, 'Hapus produk: ' + id, null, null);
+    clearDataCache();
+    return respond(true, 'Produk berhasil dihapus', null);
   },
 
   getKategori: function() {
     return respond(true, '', getDataAsObjects('05_KATEGORI_PRODUK'));
+  },
+
+  createKategori: function(data, session) {
+    var missing = validateRequired(data, ['nama_kategori']);
+    if (missing.length > 0) return respond(false, 'Field wajib: ' + missing.join(', '), null);
+    var sheet = getSheet('05_KATEGORI_PRODUK');
+    var lastId = sheet.getLastRow();
+    var newId = 'KAT-' + ('000' + (lastId)).slice(-3);
+    sheet.appendRow([newId, data.nama_kategori, data.deskripsi || '', new Date(), new Date()]);
+    logActivity(session.user_id, 'CREATE', 'KATEGORI', newId, 'Tambah kategori: ' + data.nama_kategori, null, data);
+    clearDataCache();
+    return respond(true, 'Kategori berhasil ditambahkan', { kategori_id: newId });
   }
 };

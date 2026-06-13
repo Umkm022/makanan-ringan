@@ -6,6 +6,7 @@ var SESSION_EXPIRY_HOURS = 24;
 
 function authenticate(username, password) {
   var sheet = getSheet('01_USERS');
+  if (!sheet) return respond(false, 'Sistem belum siap. Hubungi owner.', null);
   var data = sheet.getDataRange().getValues();
   var headers = data[0];
   var userCol = headers.indexOf('username');
@@ -57,6 +58,7 @@ function authenticate(username, password) {
 
 function getSalesIdByUserId(userId) {
   var sheet = getSheet('02_SALES');
+  if (!sheet) return { sales_id: '', full_name: '' };
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][1] === userId) {
@@ -68,25 +70,32 @@ function getSalesIdByUserId(userId) {
 
 function createSession(token, user) {
   var sheet = getSheet('34_SESSION');
+  if (!sheet) return;
   var expiry = new Date();
   expiry.setHours(expiry.getHours() + SESSION_EXPIRY_HOURS);
   sheet.appendRow([token, user.user_id, user.role, new Date(), expiry, '']);
 }
 
+var _sessionCache = {};
+
 function validateSession(token) {
   if (!token) return null;
+  if (_sessionCache[token]) {
+    var cached = _sessionCache[token];
+    if (new Date(cached.expiry) > new Date()) return cached;
+    delete _sessionCache[token];
+  }
   var sheet = getSheet('34_SESSION');
+  if (!sheet) return null;
   var data = sheet.getDataRange().getValues();
   var now = new Date();
 
   for (var i = 1; i < data.length; i++) {
     if (data[i][0] === token) {
       if (new Date(data[i][4]) > now) {
-        return {
-          user_id: data[i][1],
-          role: data[i][2],
-          token: token
-        };
+        var session = { user_id: data[i][1], role: data[i][2], token: token, expiry: data[i][4] };
+        _sessionCache[token] = session;
+        return session;
       } else {
         sheet.deleteRow(i+1);
         return null;
@@ -98,6 +107,7 @@ function validateSession(token) {
 
 function destroySession(token) {
   var sheet = getSheet('34_SESSION');
+  if (!sheet) return respond(true, 'Session tidak ditemukan.', null);
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][0] === token) {
@@ -136,6 +146,7 @@ function getCurrentUser(token) {
   var session = validateSession(token);
   if (!session) return null;
   var sheet = getSheet('01_USERS');
+  if (!sheet) return null;
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (data[i][0] === session.user_id) {
@@ -170,6 +181,25 @@ function changePassword(oldPassword, newPassword, session) {
       sheet.getRange(i+1, passCol+1).setValue(newHash);
       logActivity(session.user_id, 'UPDATE', 'USER', session.user_id, 'Ganti password', null, null);
       return respond(true, 'Password berhasil diubah', null);
+    }
+  }
+  return respond(false, 'User tidak ditemukan', null);
+}
+
+function updateProfile(data, session) {
+  if (!session) return respond(false, 'Unauthorized', null);
+  var sheet = getSheet('01_USERS');
+  if (!sheet) return respond(false, 'Sistem error', null);
+  var all = sheet.getDataRange().getValues();
+  var h = all[0];
+  var idCol = h.indexOf('user_id');
+  var nameCol = h.indexOf('full_name');
+  if (nameCol < 0) return respond(false, 'Sistem error: kolom tidak ditemukan', null);
+  for (var i = 1; i < all.length; i++) {
+    if (all[i][idCol] === session.user_id) {
+      if (data.full_name) sheet.getRange(i+1, nameCol+1).setValue(data.full_name);
+      logActivity(session.user_id, 'UPDATE', 'USER', session.user_id, 'Update profil', null, null);
+      return respond(true, 'Profil berhasil diperbarui', null);
     }
   }
   return respond(false, 'User tidak ditemukan', null);

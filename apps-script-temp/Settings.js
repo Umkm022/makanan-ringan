@@ -23,9 +23,11 @@ var SettingsService = {
         sheet.getRange(i+1, 4).setValue(value);
         sheet.getRange(i+1, 7).setValue(userId);
         sheet.getRange(i+1, 8).setValue(new Date());
+        clearDataCache();
         return true;
       }
     }
+    clearDataCache();
     return false;
   },
 

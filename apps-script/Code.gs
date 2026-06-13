@@ -113,6 +113,7 @@ function routeAction(action, params, session) {
     case 'getRiwayatKunjungan':   return KunjunganService.getRiwayatKunjungan(params.customerId, session);
     case 'getRiwayatSales':       return KunjunganService.getRiwayatSales(session);
     case 'getAllRiwayatKunjungan': return KunjunganService.getAllRiwayatKunjungan(params);
+    case 'getAllKunjungan':       return KunjunganService.getAllKunjungan(params, session);
     case 'uploadFotoToko':        return KunjunganService.uploadFotoToko(params.kunjunganId, params.fileName, params.fileData, session, params.tipe, params.lat, params.lng);
     case 'restockFromKunjungan':  return KunjunganService.restockFromKunjungan(params.kunjunganId, session);
     case 'getDraftKunjungan':     return KunjunganService.getDraftKunjungan(session);
@@ -143,11 +144,23 @@ function routeAction(action, params, session) {
 
     // STOK
     case 'getStokGudang':         return StokService.getStokGudang();
+    case 'updateStokGudang':      return StokService.updateStokGudang(params.id, params.data, session);
+    case 'deleteStokGudang':      return StokService.deleteStokGudang(params.id, session);
     case 'getStokKonsinyasi':     return StokService.getStokKonsinyasi(params, session);
+    case 'updateStokKonsinyasi':  return StokService.updateStokKonsinyasi(params.id, params.data, session);
+    case 'deleteStokKonsinyasi':  return StokService.deleteStokKonsinyasi(params.id, session);
+    case 'getRekapStokKonsinyasi': return StokService.getRekapStokKonsinyasi(session);
+
+    // REKENING & KAS
+    case 'getRekening':           return RekeningService.getRekening(session);
+    case 'createRekening':        return RekeningService.createRekening(params.data, session);
+    case 'updateRekening':        return RekeningService.updateRekening(params.id, params.data, session);
+    case 'deleteRekening':        return RekeningService.deleteRekening(params.id, session);
+    case 'getSaldoRekening':      return RekeningService.getSaldoRekening(session);
+    case 'getMutasiRekening':     return KasService.getMutasiRekening(params);
+    case 'getRekapKas':           return KasService.getRekapKas(session);
 
     // NOTIFIKASI
-    case 'getNotifikasi':         return NotifikasiService.getNotifikasi(params.userId, session);
-    case 'markNotifRead':         return NotifikasiService.markAsRead(params.notifId);
 
     // DASHBOARD
     case 'getOwnerDashboard':     return DashboardService.getOwnerDashboard(session);
@@ -156,6 +169,7 @@ function routeAction(action, params, session) {
 
 
     // SALES
+    case 'getSales':              return SalesPersonService.getSales();
     case 'getSalesList':          return SalesPersonService.getSales();
     case 'getSalesById':          return SalesPersonService.getSalesById(params.id);
     case 'createSales':           if (session.role !== 'OWNER' && session.role !== 'ADMIN') return respond(false, 'Forbidden', null); return SalesPersonService.createSales(params.data);

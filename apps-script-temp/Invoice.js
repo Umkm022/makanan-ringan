@@ -10,7 +10,10 @@ var InvoiceService = {
       all = all.filter(function(inv) { return inv.sales_id === salesId; });
     }
     if (params) {
-      if (params.status) all = all.filter(function(inv) { return inv.status_pembayaran === params.status; });
+      if (params.status) {
+        var sts = params.status.split(',');
+        all = all.filter(function(inv) { return sts.indexOf(inv.status_pembayaran) > -1; });
+      }
       if (params.customer_id) all = all.filter(function(inv) { return inv.customer_id === params.customer_id; });
       if (params.sales_id && session.role !== 'SALES') all = all.filter(function(inv) { return inv.sales_id === params.sales_id; });
     }
@@ -24,8 +27,12 @@ var InvoiceService = {
       all = all.filter(function(p) { return p.sales_id === salesId; });
     }
     if (params) {
-      if (params.status) all = all.filter(function(p) { return p.status === params.status; });
+      if (params.status) {
+        var sts = params.status.split(',');
+        all = all.filter(function(p) { return sts.indexOf(p.status) > -1; });
+      }
       if (params.customer_id) all = all.filter(function(p) { return p.customer_id === params.customer_id; });
+      if (params.sales_id && session.role !== 'SALES') all = all.filter(function(p) { return p.sales_id === params.sales_id; });
     }
     return respond(true, '', all);
   },
