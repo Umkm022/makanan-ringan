@@ -735,7 +735,7 @@ async function _handleCheckSystemReady() {
 }
 
 async function _handleSetupOwner(params) {
-  var email = params.email && params.email.trim() ? params.email.trim() : (params.username + '@seblak.sales');
+  var email = params.email && params.email.trim() ? params.email.trim() : (params.username + '@seblak.id');
   // Register with Supabase Auth
   const { data: authData, error: authErr } = await _supabase.auth.signUp({
     email: email,
@@ -958,7 +958,7 @@ bridge._actions['createSales'] = async (params) => {
     if (!dup) break;
     finalUsername = baseUsername + '_' + u;
   }
-  var email = d.email || finalUsername + '@seblak.sales';
+  var email = d.email || finalUsername + '@seblak.id';
   var authId = null;
   for (var attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
