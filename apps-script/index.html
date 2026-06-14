@@ -1094,6 +1094,22 @@ function confirmAndDelete(apiAction, id, page, message) {
     });
   });
 }
+function getStatusBadge(status) {
+  var map = {
+    'OPEN': '<span class="badge badge-warning">OPEN</span>',
+    'PARTIAL': '<span class="badge badge-info">PARTIAL</span>',
+    'PAID': '<span class="badge badge-success">PAID</span>',
+    'LUNAS': '<span class="badge badge-success">LUNAS</span>',
+    'BELUM BAYAR': '<span class="badge badge-warning">BELUM BAYAR</span>',
+    'AKTIF': '<span class="badge badge-success">AKTIF</span>',
+    'NONAKTIF': '<span class="badge badge-error">NONAKTIF</span>',
+    'SUSPEND': '<span class="badge badge-error">SUSPEND</span>',
+    'DRAFT': '<span class="badge badge-warning">DRAFT</span>',
+    'COMPLETED': '<span class="badge badge-success">COMPLETED</span>',
+    'READY': '<span class="badge badge-info">READY</span>'
+  };
+  return map[status] || '<span class="badge">' + status + '</span>';
+}
 // ====== DASHBOARD ======
 function renderDashboard(d){
   var html='';
@@ -1796,9 +1812,10 @@ function mulaiKunjungan(){
   if (kunjunganState.loading) return;
   kunjunganState.loading = true;
   var custId=document.getElementById('kunjCustomer').value;
-  document.getElementById('step1').classList.remove('btn-primary');
-  document.getElementById('step1').classList.add('btn-success');
-  document.getElementById('step2').style.opacity='1';
+  var el1=document.getElementById('step1');
+  if(el1){el1.classList.remove('btn-primary');el1.classList.add('btn-success')}
+  var el2=document.getElementById('step2');
+  if(el2)el2.style.opacity='1';
   var el=document.getElementById('kunjunganContent');
   el.innerHTML='<div class="loading">Mendapatkan lokasi GPS...</div>';
   var doStart = function(lat, lng) {
