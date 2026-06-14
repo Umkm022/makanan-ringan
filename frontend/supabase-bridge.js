@@ -465,6 +465,155 @@ bridge._actions['getAllRiwayatKunjungan'] = async () => {
   return ok(data);
 };
 
+bridge._actions['startKunjungan'] = async (params) => {
+  const session = await requireAuth();
+  const { data: customer } = await _supabase.from('customers').select('*, sales(full_name)').eq('customer_id', params.customerId).single();
+  if (!customer) return fail('Customer tidak ditemukan');
+  if (session.role === 'SALES' && customer.sales_id !== (session.user?.user_metadata?.sales_id || '')) return fail('Akses ditolak: bukan customer Anda');
+  const { data: visit, error } = await _supabase.from('visits').insert({
+    customer_id: customer.customer_id, sales_id: customer.sales_id,
+    visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toISOString(),
+    status: 'DRAFT', latitude: params.latitude || '', longitude: params.longitude || '',
+  }).select().single();
+  if (error) return fail(error.message);
+  const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.customer_id);
+  const { data: allProduk } = await _supabase.from('products').select('*').eq('is_active', true);
+  var produk = (allProduk || []).map(function(p) {
+    var sk = (stokAll || []).filter(function(s) { return s.produk_id === p.id; })[0] || {};
+    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_sisa || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.selling_price || 0, hpp: p.hpp || 0 };
+  });
+  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: { customer_id: customer.customer_id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
+};
+
+bridge._actions['saveSisaStok'] = async (params) => {
+  var items = params.items || [];
+  if (!items.length) return fail('Tidak ada data produk');
+  var totalTerjual = 0, totalRetur = 0, totalInvoice = 0;
+  await _supabase.from('visit_details').delete().eq('kunjungan_id', params.kunjunganId);
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var terjual = Math.max(0, item.stok_awal - item.sisa_fisik - (item.rusak || 0) - (item.retur || 0));
+    var restock = Math.max(0, item.target_display - item.sisa_fisik);
+    var subtotal = terjual * item.harga_jual;
+    var { error } = await _supabase.from('visit_details').insert({
+      kunjungan_id: params.kunjunganId, produk_id: item.produk_id, stok_awal: item.stok_awal, sisa_fisik: item.sisa_fisik,
+      rusak: item.rusak || 0, retur: item.retur || 0, terjual: terjual, target_display: item.target_display,
+      rekomendasi_restock: restock, harga_jual: item.harga_jual, subtotal: subtotal,
+    });
+    if (error) return fail(error.message);
+    totalTerjual += terjual; totalRetur += (item.retur || 0); totalInvoice += subtotal;
+  }
+  await _supabase.from('visits').update({ total_sold: totalTerjual, total_return: totalRetur, total_invoice: totalInvoice }).eq('kunjungan_id', params.kunjunganId);
+  return ok({ total_terjual: totalTerjual, total_retur: totalRetur, total_invoice: totalInvoice });
+};
+
+bridge._actions['resumeKunjungan'] = async (params) => {
+  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('id', params.kunjunganId).single();
+  if (!visit || visit.status !== 'DRAFT') return fail('Kunjungan tidak ditemukan atau bukan DRAFT');
+  const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  const { data: allProduk } = await _supabase.from('products').select('*');
+  var customer = visit.customers ? { customer_id: visit.customers.customer_id, store_name: visit.customers.store_name, owner_name: visit.customers.owner_name, address: visit.customers.address, kota: visit.customers.city } : {};
+  var produk = (details || []).map(function(d) {
+    var pr = (allProduk || []).filter(function(p) { return p.id === d.produk_id; })[0] || {};
+    return { produk_id: d.produk_id, nama_produk: pr.name || d.produk_id, stok_awal: d.stok_awal, sisa_fisik: d.sisa_fisik, rusak: d.rusak, retur: d.retur, terjual: d.terjual, target_display: d.target_display, rekomendasi_restock: d.rekomendasi_restock, harga_jual: d.harga_jual };
+  });
+  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: customer, produk: produk, last_visit: visit.visit_date });
+};
+
+bridge._actions['finalizeKunjungan'] = async (params) => {
+  const session = await requireAuth();
+  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('kunjungan_id', params.kunjunganId).single();
+  if (!visit) return fail('Kunjungan tidak ditemukan');
+  if (visit.status !== 'DRAFT') return fail('Kunjungan sudah difinalisasi');
+  var customerId = visit.customer_id, salesId = visit.sales_id, invoiceTotal = visit.total_invoice || 0;
+  const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  for (var d of details || []) {
+    if (d.terjual > 0 || d.rusak > 0 || d.retur > 0) {
+      var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('produk_id', d.produk_id).single();
+      if (existing) { await _supabase.from('consignment_stock').update({ qty_terjual: (existing.qty_terjual || 0) + (d.terjual || 0), qty_retur: (existing.qty_retur || 0) + (d.retur || 0), qty_rusak: (existing.qty_rusak || 0) + (d.rusak || 0), qty_sisa: d.sisa_fisik }).eq('id', existing.id); }
+      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, produk_id: d.produk_id, sales_id: salesId, qty_titip_awal: 0, qty_terjual: d.terjual, qty_retur: d.retur, qty_rusak: d.rusak, qty_sisa: d.sisa_fisik, target_display: d.target_display }); }
+    }
+    if (d.retur > 0) {
+      await _supabase.from('returns').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, produk_id: d.produk_id, qty_retur: d.retur, alasan: 'TIDAK_LAKU', tujuan: 'MASUK_GUDANG' });
+      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('produk_id', d.produk_id).single();
+      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (d.retur || 0), qty_remaining: (gudang.qty_remaining || 0) + (d.retur || 0) }).eq('id', gudang.id); }
+      else { await _supabase.from('warehouse_stock').insert({ produk_id: d.produk_id, qty_in: d.retur, qty_out: 0, qty_remaining: d.retur, unit: 'PCS' }); }
+    }
+  }
+  var invoiceId = null;
+  if (invoiceTotal > 0) {
+    var tempo = 30;
+    var { data: cust } = await _supabase.from('customers').select('payment_term').eq('customer_id', customerId).single();
+    if (cust?.payment_term) tempo = parseInt(cust.payment_term) || 30;
+    var jatuhTempo = new Date(); jatuhTempo.setDate(jatuhTempo.getDate() + tempo);
+    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status_pembayaran: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() }).select().single();
+    if (!invErr && inv) {
+      invoiceId = inv.id;
+      for (var dd of details || []) {
+        if (dd.terjual > 0) {
+          var { data: prod } = await _supabase.from('products').select('hpp').eq('id', dd.produk_id).single();
+          var hpp = prod?.hpp || 0;
+          await _supabase.from('invoice_details').insert({ invoice_id: inv.id, produk_id: dd.produk_id, qty: dd.terjual, harga_jual: dd.harga_jual, subtotal: dd.subtotal, hpp_satuan: hpp, laba: dd.subtotal - (dd.terjual * hpp) });
+        }
+      }
+      await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total_piutang: invoiceTotal, sisa_piutang: invoiceTotal, status: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() });
+    }
+  }
+  await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toISOString() }).eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  var { data: allProduk } = await _supabase.from('products').select('*');
+  var restockItems = (details || []).filter(function(dd) { return dd.rekomendasi_restock > 0; }).map(function(dd) {
+    var pr = (allProduk || []).filter(function(p) { return p.id === dd.produk_id; })[0] || {};
+    return { produk_id: dd.produk_id, produk_nama: pr.name || dd.produk_id, qty: dd.rekomendasi_restock };
+  });
+  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, invoice_id: invoiceId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, has_restock_recommendation: restockItems.length > 0, restock_items: restockItems }, 'Kunjungan berhasil difinalisasi');
+};
+
+bridge._actions['cancelKunjungan'] = async (params) => {
+  const session = await requireAuth();
+  const { data: visit } = await _supabase.from('visits').select('*').eq('kunjungan_id', params.kunjunganId).single();
+  if (!visit) return fail('Kunjungan tidak ditemukan');
+  if (session.role === 'SALES' && visit.sales_id !== (session.user?.user_metadata?.sales_id || '')) return fail('Akses ditolak');
+  if (visit.status === 'DRAFT') { await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId); return ok(null, 'Kunjungan draft dibatalkan'); }
+  if (visit.status === 'COMPLETED') {
+    if (visit.total_invoice > 0) {
+      var { data: invoices } = await _supabase.from('invoices').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
+      for (var inv of invoices || []) { await _supabase.from('invoices').update({ status_pembayaran: 'VOID' }).eq('id', inv.id); await _supabase.from('receivables').update({ status: 'VOID' }).eq('invoice_id', inv.id); }
+    }
+    await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId);
+    return ok(null, 'Kunjungan dibatalkan, invoice & piutang dibatalkan');
+  }
+  return fail('Kunjungan sudah ' + visit.status + ', tidak bisa dibatalkan');
+};
+
+bridge._actions['restockFromKunjungan'] = async (params) => {
+  const session = await requireAuth();
+  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('kunjungan_id', params.kunjunganId).single();
+  if (!visit || visit.status !== 'COMPLETED') return fail('Kunjungan harus difinalisasi dulu');
+  const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  var items = (details || []).filter(function(d) { return d.rekomendasi_restock > 0; }).map(function(d) { return { produk_id: d.produk_id, qty: d.rekomendasi_restock }; });
+  if (!items.length) return fail('Tidak ada rekomendasi restock');
+  var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({ customer_id: visit.customer_id, sales_id: visit.sales_id, type: 'RESTOCK', status: 'SHIPPED', total_items: items.length, total_qty: items.reduce(function(s, i) { return s + i.qty; }, 0), notes: 'Restock otomatis dari kunjungan ' + (visit.kunjungan_id || visit.id) }).select().single();
+  if (shpErr) return fail(shpErr.message);
+  for (var item of items) {
+    await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
+    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', visit.customer_id).eq('produk_id', item.produk_id).single();
+    if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
+    else { await _supabase.from('consignment_stock').insert({ customer_id: visit.customer_id, produk_id: item.produk_id, sales_id: visit.sales_id, qty_titip_awal: item.qty, qty_terjual: 0, qty_sisa: item.qty }); }
+  }
+  return ok(null, 'Restock berhasil');
+};
+
+bridge._actions['uploadFotoKunjungan'] = async (params) => {
+  var kunjunganId = params.kunjunganId, tipe = params.tipe || 'sebelum', dataUrl = params.dataUrl;
+  if (!kunjunganId || !dataUrl) return fail('Parameter kurang');
+  var { data: visit } = await _supabase.from('visits').select('photos').eq('kunjungan_id', kunjunganId).single();
+  var arr = []; try { arr = JSON.parse(visit?.photos || '[]'); } catch(e) { arr = []; } if (!Array.isArray(arr)) arr = [];
+  var entry = { url: dataUrl }; if (params.latitude && params.longitude) { entry.lat = params.latitude; entry.lng = params.longitude; }
+  if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); } else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
+  await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('kunjungan_id', kunjunganId);
+  return ok(null, 'Foto berhasil diupload');
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // STOCK ACTIONS
 // ═══════════════════════════════════════════════════════════════════
