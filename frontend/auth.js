@@ -54,6 +54,10 @@ window.doLogout = async function doLogout() {
   sessionStorage.clear();
   if (typeof showPage === 'function') {
     showPage('login');
+    setTimeout(function(){
+      var u=document.getElementById('username');if(u)u.value='';
+      var p=document.getElementById('password');if(p)p.value='';
+    },50);
   } else {
     window.location.href = '?page=login';
   }

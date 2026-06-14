@@ -2117,6 +2117,10 @@ window.doLogout = async function doLogout() {
   sessionStorage.clear();
   if (typeof showPage === 'function') {
     showPage('login');
+    setTimeout(function(){
+      var u=document.getElementById('username');if(u)u.value='';
+      var p=document.getElementById('password');if(p)p.value='';
+    },50);
   } else {
     window.location.href = '?page=login';
   }
@@ -2231,7 +2235,7 @@ window.goSetup = function goSetup() {
           <label>Password</label>
           <div class="input-wrap">
             <span class="input-icon">🔒</span>
-            <input type="password" id="password" placeholder="Masukkan password" autocomplete="off">
+            <input type="password" id="password" placeholder="Masukkan password" autocomplete="new-password">
             <button class="pw-toggle" type="button" onclick="togglePassword()" tabindex="-1">👁️</button>
           </div>
         </div>
