@@ -1,0 +1,20 @@
+{
+  "name": "supplier-seblak",
+  "version": "2.0.0",
+  "description": "Seblak Management System — Supabase + SPA",
+  "main": "frontend/index.html",
+  "scripts": {
+    "build": "node frontend/build.mjs",
+    "verify": "node frontend/verify.mjs",
+    "netlify:deploy": "netlify deploy --prod --dir=frontend",
+    "firebase:deploy": "firebase deploy --only hosting",
+    "deploy": "npm run build && npm run verify"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.1"
+  }
+}

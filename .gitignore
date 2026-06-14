@@ -1,0 +1,9 @@
+node_modules/
+supabase-config.json
+migration/import-errors.json
+migration/id-mapping.json
+.env
+.env.local
+
+# Local Netlify folder
+.netlify
