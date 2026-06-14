@@ -2726,10 +2726,10 @@ function setCached(key, data) {
   _cacheTimestamps[key] = Date.now();
 }
 
-function populateSelect(selectId, data, valueKey, labelKey1, labelKey2, selectedValue) {
+function populateSelect(selectId, data, valueKey, labelKey1, labelKey2, selectedValue, placeholder) {
   var sel = document.getElementById(selectId);
   if (!sel) return;
-  var html = '<option value="">Semua Sales</option>';
+  var html = '<option value="">'+(placeholder||'Semua Sales')+'</option>';
   data.forEach(function(s) {
     var val = s[valueKey] || '';
     var label = s[labelKey1] || s[labelKey2] || val;
@@ -2756,13 +2756,13 @@ function loadSalesDropdown(selectId, selectedValue, callback) {
 function loadProdukDropdown(selectId, selectedValue, callback) {
   var cached = getCached('produk', 300);
   if (cached && cached.success) {
-    if (selectId) populateSelect(selectId, cached.data, 'produk_id', 'nama_produk', 'nama', selectedValue);
+    if (selectId) populateSelect(selectId, cached.data, 'produk_id', 'nama_produk', 'nama', selectedValue, 'Semua Produk');
     if (callback) callback();
     return;
   }
   api('getProduk', {}, function(r) {
     if (r.success) setCached('produk', r);
-    if (selectId) populateSelect(selectId, (r.data||[]), 'produk_id', 'nama_produk', 'nama', selectedValue);
+    if (selectId) populateSelect(selectId, (r.data||[]), 'produk_id', 'nama_produk', 'nama', selectedValue, 'Semua Produk');
     if (callback) callback();
   });
 }
