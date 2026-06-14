@@ -20,6 +20,7 @@ function resolveIncludes(content, baseDir) {
   });
 }
 
+// Trigger rebuild with Cloudflare build settings configured
 function build() {
   console.log('Building frontend...');
   let html = readFileSync(resolve(APPS_SCRIPT, 'index.html'), 'utf8');
