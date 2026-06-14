@@ -467,22 +467,22 @@ bridge._actions['getAllRiwayatKunjungan'] = async () => {
 
 bridge._actions['startKunjungan'] = async (params) => {
   const session = await requireAuth();
-  const { data: customer } = await _supabase.from('customers').select('*, sales(full_name)').eq('customer_id', params.customerId).single();
+  const { data: customer } = await _supabase.from('customers').select('*, sales(full_name)').eq('id', params.customerId).single();
   if (!customer) return fail('Customer tidak ditemukan');
   if (session.role === 'SALES' && customer.sales_id !== (session.user?.user_metadata?.sales_id || '')) return fail('Akses ditolak: bukan customer Anda');
   const { data: visit, error } = await _supabase.from('visits').insert({
-    customer_id: customer.customer_id, sales_id: customer.sales_id,
+    customer_id: customer.id, sales_id: customer.sales_id,
     visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toISOString(),
     status: 'DRAFT', latitude: params.latitude || '', longitude: params.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
-  const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.customer_id);
+  const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.id);
   const { data: allProduk } = await _supabase.from('products').select('*').eq('is_active', true);
   var produk = (allProduk || []).map(function(p) {
     var sk = (stokAll || []).filter(function(s) { return s.produk_id === p.id; })[0] || {};
     return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_sisa || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.selling_price || 0, hpp: p.hpp || 0 };
   });
-  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: { customer_id: customer.customer_id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
+  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: { customer_id: customer.id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
 };
 
 bridge._actions['saveSisaStok'] = async (params) => {
@@ -790,18 +790,22 @@ bridge._actions['createProduksi'] = async (params) => {
 // ═══════════════════════════════════════════════════════════════════
 
 bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) => {
-  // For simplicity, handle as shipment
-  const { data, error } = await _supabase.from('shipments').insert({
-    customer_id: params.customer_id,
-    sales_id: params.sales_id,
-    type: params.tipe || 'RESTOCK',
-    status: 'SHIPPED',
-    total_items: params.items?.length || 0,
-    total_qty: params.items?.reduce((s, i) => s + (i.qty || 0), 0) || 0,
-    notes: params.notes,
+  const d = params.data || params;
+  const { data: cust } = await _supabase.from('customers').select('sales_id').eq('id', d.customer_id).single();
+  var salesId = d.sales_id || cust?.sales_id || null;
+  const items = d.items || [];
+  const { data: shp, error: shpErr } = await _supabase.from('shipments').insert({
+    customer_id: d.customer_id, sales_id: salesId, type: d.tipe || 'RESTOCK', status: 'SHIPPED',
+    total_items: items.length, total_qty: items.reduce((s, i) => s + (i.qty || 0), 0), notes: d.notes || '',
   }).select().single();
-  if (error) return fail(error.message);
-  return ok(data, 'Titipan berhasil');
+  if (shpErr) return fail(shpErr.message);
+  for (var item of items) {
+    await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
+    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('produk_id', item.produk_id).single();
+    if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
+    else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, produk_id: item.produk_id, sales_id: salesId, qty_titip_awal: item.qty, qty_terjual: 0, qty_retur: 0, qty_sisa: item.qty }); }
+  }
+  return ok(shp, 'Titipan berhasil');
 };
 
 // ═══════════════════════════════════════════════════════════════════
