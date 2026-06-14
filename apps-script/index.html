@@ -2548,6 +2548,7 @@ function renderTitipPage() {
   html+='<p><strong>Total Qty: </strong><span id="cartTotalQty">0</span></p>';
   html+='</div>';
   html+='<button class="btn btn-success" onclick="simpanTitipCart()" id="btnSimpanTitip" disabled style="margin-top:8px;width:100%">Simpan Titipan</button>';
+  html+='<button class="btn btn-outline" onclick="batalTitip()" style="margin-top:4px;width:100%">Batal</button>';
   html+='<div id="titipResult" style="margin-top:8px"></div>';
   html+='</div></div>';
   mc.innerHTML=html;
@@ -2647,6 +2648,16 @@ function simpanTitipCart(){
     invalidateCache('titipan'); toast('Titipan berhasil');
     if(btnEl)btnEl.disabled=false;
   });
+}
+function batalTitip(){
+  _titipCart=[];
+  renderCart();
+  document.getElementById('fTitipCust').value='';
+  document.getElementById('fTitipTipe').value='AWAL';
+  document.getElementById('fCartQty').value='20';
+  document.getElementById('fCartHarga').value='0';
+  document.getElementById('titipResult').innerHTML='';
+  toast('Keranjang dikosongkan');
 }
 
 // ====== INVOICE PAGE ======

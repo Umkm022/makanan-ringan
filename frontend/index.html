@@ -914,23 +914,25 @@ bridge._actions['createKategori'] = async (params) => {
 // ═══════════════════════════════════════════════════════════════════
 
 bridge._actions['getSales'] = bridge._actions['getSalesList'] = async () => {
-  // Ambil dari users dengan role SALES (termasuk yg dinonaktifkan)
-  const { data: users } = await _supabase.from('users').select('*, sales(*)').eq('role', 'SALES').order('created_at', { ascending: false });
-  const mapped = (users || []).map(u => {
-    const s = u.sales || {};
-    return {
-      sales_id: s.id || u.sales_id,
-      code: s.code || '',
-      full_name: u.full_name || s.full_name || '',
-      phone: u.phone || s.phone || '',
-      address: s.address || '',
-      kota: s.city || '',
-      komisi_rate: s.komisi_rate || 0,
-      target_bulanan: s.target_bulanan || 0,
-      status: s.status || (u.is_active ? 'AKTIF' : 'NONAKTIF'),
+  // Ambil semua sales (termasuk NONAKTIF) + orphaned users (sales_id null)
+  const [{ data: salesData }, { data: orphanUsers }] = await Promise.all([
+    _supabase.from('sales').select('*, users(*)').order('id', { ascending: false }),
+    _supabase.from('users').select('*').eq('role', 'SALES').is('sales_id', null),
+  ]);
+  var mapped = (salesData || []).map(function(s) {
+    var u = s.users || {};
+    return Object.assign(mapFields(s, salesMap), {
+      is_active: u.is_active !== false,
       users: u,
-      is_active: u.is_active,
-    };
+    });
+  });
+  (orphanUsers || []).forEach(function(u) {
+    mapped.push({
+      sales_id: null, code: '', full_name: u.full_name || '',
+      phone: u.phone || '', address: '', kota: '',
+      komisi_rate: 0, target_bulanan: 0, status: 'NONAKTIF',
+      users: u, is_active: false,
+    });
   });
   return ok(mapped);
 };
@@ -1401,7 +1403,7 @@ bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) =
   if (shpErr) return fail(shpErr.message);
   for (var item of items) {
     await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
-    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('produk_id', item.produk_id).single();
+    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('produk_id', item.produk_id).maybeSingle();
     if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
     else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, produk_id: item.produk_id, sales_id: salesId, qty_titip_awal: item.qty, qty_terjual: 0, qty_retur: 0, qty_sisa: item.qty }); }
   }
@@ -4264,6 +4266,7 @@ function renderTitipPage() {
   html+='<p><strong>Total Qty: </strong><span id="cartTotalQty">0</span></p>';
   html+='</div>';
   html+='<button class="btn btn-success" onclick="simpanTitipCart()" id="btnSimpanTitip" disabled style="margin-top:8px;width:100%">Simpan Titipan</button>';
+  html+='<button class="btn btn-outline" onclick="batalTitip()" style="margin-top:4px;width:100%">Batal</button>';
   html+='<div id="titipResult" style="margin-top:8px"></div>';
   html+='</div></div>';
   mc.innerHTML=html;
@@ -4363,6 +4366,16 @@ function simpanTitipCart(){
     invalidateCache('titipan'); toast('Titipan berhasil');
     if(btnEl)btnEl.disabled=false;
   });
+}
+function batalTitip(){
+  _titipCart=[];
+  renderCart();
+  document.getElementById('fTitipCust').value='';
+  document.getElementById('fTitipTipe').value='AWAL';
+  document.getElementById('fCartQty').value='20';
+  document.getElementById('fCartHarga').value='0';
+  document.getElementById('titipResult').innerHTML='';
+  toast('Keranjang dikosongkan');
 }
 
 // ====== INVOICE PAGE ======
