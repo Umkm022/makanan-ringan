@@ -904,18 +904,35 @@ bridge._actions['getSalesById'] = async (params) => {
 };
 
 bridge._actions['createSales'] = async (params) => {
-  const { data, error } = await _supabase.from('sales').insert({
-    code: params.sales_code,
-    full_name: params.full_name,
-    phone: params.phone,
-    address: params.address,
-    city: params.kota,
-    komisi_rate: params.komisi_rate,
-    target_bulanan: params.target_bulanan,
-    status: params.status || 'AKTIF',
+  const d = params.data || params;
+  var email = d.email || d.username + '@sales.local';
+  var password = d.password || 'seblak123';
+  var { data: authData, error: authErr } = await _supabase.auth.signUp({ email: email, password: password });
+  if (authErr) return fail(authErr.message);
+  var { count } = await _supabase.from('sales').select('*', { count: 'exact', head: true });
+  var salesCode = 'SLS-' + String(count + 1).padStart(3, '0');
+  var { data: salesData, error: salesErr } = await _supabase.from('sales').insert({
+    code: d.sales_code || salesCode,
+    full_name: d.full_name,
+    phone: d.phone,
+    address: d.address,
+    city: d.kota,
+    komisi_rate: d.komisi_rate,
+    target_bulanan: d.target_bulanan,
+    status: d.status || 'AKTIF',
   }).select().single();
-  if (error) return fail(error.message);
-  return ok(data, 'Sales berhasil dibuat');
+  if (salesErr) return fail(salesErr.message);
+  var { error: userErr } = await _supabase.from('users').insert({
+    auth_id: authData.user.id,
+    username: d.username || d.full_name?.toLowerCase().replace(/\s+/g, ''),
+    email: email,
+    role: 'SALES',
+    full_name: d.full_name,
+    sales_id: salesData.sales_id,
+    is_active: true,
+  });
+  if (userErr) return fail(userErr.message);
+  return ok(salesData, 'Sales berhasil dibuat');
 };
 
 bridge._actions['updateSales'] = async (params) => {
