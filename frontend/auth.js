@@ -65,15 +65,15 @@ window.doLogout = async function doLogout() {
 
 // ── Override setup ────────────────────────────────────────────────
 window.doSetup = async function doSetup() {
-  const fullName = document.getElementById('fullName')?.value?.trim();
-  const username = document.getElementById('username')?.value?.trim().toLowerCase();
-  const email = document.getElementById('email')?.value?.trim();
-  const password = document.getElementById('password')?.value;
-  const passwordConfirm = document.getElementById('passwordConfirm')?.value;
+  const fullName = document.getElementById('setupFullName')?.value?.trim();
+  const username = document.getElementById('setupUsername')?.value?.trim().toLowerCase();
+  const email = document.getElementById('setupEmail')?.value?.trim();
+  const password = document.getElementById('setupPassword')?.value;
+  const passwordConfirm = document.getElementById('setupPasswordConfirm')?.value;
   const btn = document.getElementById('btnSetup');
-  const errorEl = document.getElementById('errorMsg');
-  const successEl = document.getElementById('successMsg');
-  const loadingEl = document.getElementById('loadingSpinner');
+  const errorEl = document.getElementById('setupErrorMsg');
+  const successEl = document.getElementById('setupSuccessMsg');
+  const loadingEl = document.getElementById('setupLoadingSpinner');
 
   if (errorEl) errorEl.style.display = 'none';
   if (successEl) successEl.style.display = 'none';
