@@ -309,8 +309,8 @@ async function main() {
 
     // ── Test 2: Sales ──────────────────────────────────────────
     console.log('\n🔐 LOGIN AS SALES');
-    console.log('   Note: createSales only inserts into sales table, NOT Supabase Auth.');
-    console.log('   Sales user must exist in both users table AND Supabase Auth to login.');
+    console.log('   Note: createSales now creates Supabase Auth account + users + sales records.');
+    console.log('   Existing sales users (created before the fix) may not have Auth accounts.');
     const salesCtx = await browser.newContext();
     const salesPage = await salesCtx.newPage();
     setupConsoleCapture(salesPage);

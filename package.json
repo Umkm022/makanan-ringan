@@ -8,7 +8,9 @@
     "verify": "node frontend/verify.mjs",
     "netlify:deploy": "netlify deploy --prod --dir=frontend",
     "firebase:deploy": "firebase deploy --only hosting",
-    "deploy": "npm run build && npm run verify"
+    "deploy": "npm run build && npm run verify",
+    "test": "node tests/e2e-test.mjs",
+    "test:owner": "node -e \"process.env.TEST_ROLE='OWNER';require('./tests/e2e-test.mjs')\""
   },
   "keywords": [],
   "author": "",
