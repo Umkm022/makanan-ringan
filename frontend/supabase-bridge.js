@@ -8,6 +8,11 @@ const SUPABASE_ANON_KEY = 'sb_publishable_nf3b87N70ut3fPWwDeeBUQ_XvJ15S0Q';
 const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true }
 });
+const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5dW9jZmF2eXhsb3Rtb3NsaWh2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTMwMDI0MCwiZXhwIjoyMDk2ODc2MjQwfQ.Ibnw0g1_7A7t65qtwofI0SihAxkTxnIqgYtherKna8M';
+let _supabaseAdmin = null;
+try {
+  _supabaseAdmin = supabase.createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+} catch(e) { _supabaseAdmin = null; }
 
 // ── Auth helpers ───────────────────────────────────────────────────
 const bridge = {
@@ -486,10 +491,15 @@ bridge._actions['activateSales'] = async (params) => {
   return ok(null, 'Sales berhasil diaktifkan');
 };
 bridge._actions['hardDeleteSales'] = async (params) => {
-  // Hapus permanen: user + sales record
+  // Hapus permanen: user + sales record + auth user
+  var { data: userData } = await _supabase.from('users').select('auth_id').eq('sales_id', params.id).maybeSingle();
   await _supabase.from('users').delete().eq('sales_id', params.id);
   const { error } = await _supabase.from('sales').delete().eq('id', params.id);
   if (error) return fail(error.message);
+  // Hapus dari Supabase Auth (pakai service_role key)
+  if (userData?.auth_id && _supabaseAdmin) {
+    await _supabaseAdmin.auth.admin.deleteUser(userData.auth_id);
+  }
   return ok(null, 'Sales berhasil dihapus permanen');
 };
 
@@ -548,110 +558,110 @@ bridge._actions['startKunjungan'] = async (params) => {
     status: 'DRAFT', latitude: params.latitude || '', longitude: params.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
-  const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.id);
+  const { data: stokAll } = await _supabase.from('consignment_stock')      .select('*').eq('customer_id', customer.id);
   const { data: allProduk } = await _supabase.from('products').select('*').eq('is_active', true);
   var produk = (allProduk || []).map(function(p) {
-    var sk = (stokAll || []).filter(function(s) { return s.produk_id === p.id; })[0] || {};
-    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_sisa || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.selling_price || 0, hpp: p.hpp || 0 };
+    var sk = (stokAll || []).filter(function(s) { return s.product_id === p.id; })[0] || {};
+    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_remaining || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.price || 0, hpp: p.hpp || 0 };
   });
-  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: { customer_id: customer.id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
+  return ok({ kunjungan_id: visit.id, customer: { customer_id: customer.id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
 };
 
 bridge._actions['saveSisaStok'] = async (params) => {
   var items = params.items || [];
   if (!items.length) return fail('Tidak ada data produk');
   var totalTerjual = 0, totalRetur = 0, totalInvoice = 0;
-  await _supabase.from('visit_details').delete().eq('kunjungan_id', params.kunjunganId);
+  await _supabase.from('visit_details').delete().eq('visit_id', params.kunjunganId);
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
     var terjual = Math.max(0, item.stok_awal - item.sisa_fisik - (item.rusak || 0) - (item.retur || 0));
     var restock = Math.max(0, item.target_display - item.sisa_fisik);
     var subtotal = terjual * item.harga_jual;
     var { error } = await _supabase.from('visit_details').insert({
-      kunjungan_id: params.kunjunganId, produk_id: item.produk_id, stok_awal: item.stok_awal, sisa_fisik: item.sisa_fisik,
-      rusak: item.rusak || 0, retur: item.retur || 0, terjual: terjual, target_display: item.target_display,
-      rekomendasi_restock: restock, harga_jual: item.harga_jual, subtotal: subtotal,
+      visit_id: params.kunjunganId, product_id: item.produk_id, initial_stock: item.stok_awal, remaining: item.sisa_fisik,
+      damaged: item.rusak || 0, returned: item.retur || 0, sold: terjual, target_display: item.target_display,
+      restock_recommendation: restock, price: item.harga_jual, subtotal: subtotal,
     });
     if (error) return fail(error.message);
     totalTerjual += terjual; totalRetur += (item.retur || 0); totalInvoice += subtotal;
   }
-  await _supabase.from('visits').update({ total_sold: totalTerjual, total_return: totalRetur, total_invoice: totalInvoice }).eq('kunjungan_id', params.kunjunganId);
+  await _supabase.from('visits').update({ total_sold: totalTerjual, total_returned: totalRetur, total_invoice: totalInvoice }).eq('id', params.kunjunganId);
   return ok({ total_terjual: totalTerjual, total_retur: totalRetur, total_invoice: totalInvoice });
 };
 
 bridge._actions['resumeKunjungan'] = async (params) => {
   const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('id', params.kunjunganId).single();
   if (!visit || visit.status !== 'DRAFT') return fail('Kunjungan tidak ditemukan atau bukan DRAFT');
-  const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  const { data: details } = await _supabase.from('visit_details').select('*').eq('visit_id', visit.id);
   const { data: allProduk } = await _supabase.from('products').select('*');
-  var customer = visit.customers ? { customer_id: visit.customers.customer_id, store_name: visit.customers.store_name, owner_name: visit.customers.owner_name, address: visit.customers.address, kota: visit.customers.city } : {};
+  var customer = visit.customers ? { customer_id: visit.customers.id, store_name: visit.customers.store_name, owner_name: visit.customers.owner_name, address: visit.customers.address, kota: visit.customers.city } : {};
   var produk = (details || []).map(function(d) {
-    var pr = (allProduk || []).filter(function(p) { return p.id === d.produk_id; })[0] || {};
-    return { produk_id: d.produk_id, nama_produk: pr.name || d.produk_id, stok_awal: d.stok_awal, sisa_fisik: d.sisa_fisik, rusak: d.rusak, retur: d.retur, terjual: d.terjual, target_display: d.target_display, rekomendasi_restock: d.rekomendasi_restock, harga_jual: d.harga_jual };
+    var pr = (allProduk || []).filter(function(p) { return p.id === d.product_id; })[0] || {};
+    return { produk_id: d.product_id, nama_produk: pr.name || d.product_id, stok_awal: d.initial_stock, sisa_fisik: d.remaining, rusak: d.damaged, retur: d.returned, terjual: d.sold, target_display: d.target_display, rekomendasi_restock: d.restock_recommendation, harga_jual: d.price };
   });
-  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: customer, produk: produk, last_visit: visit.visit_date });
+  return ok({ kunjungan_id: visit.id, customer: customer, produk: produk, last_visit: visit.visit_date });
 };
 
 bridge._actions['finalizeKunjungan'] = async (params) => {
   const session = await requireAuth();
-  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('kunjungan_id', params.kunjunganId).single();
+  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('id', params.kunjunganId).single();
   if (!visit) return fail('Kunjungan tidak ditemukan');
   if (visit.status !== 'DRAFT') return fail('Kunjungan sudah difinalisasi');
   var customerId = visit.customer_id, salesId = visit.sales_id, invoiceTotal = visit.total_invoice || 0;
-  const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  const { data: details } = await _supabase.from('visit_details').select('*').eq('visit_id', visit.id);
   for (var d of details || []) {
-    if (d.terjual > 0 || d.rusak > 0 || d.retur > 0) {
-      var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('produk_id', d.produk_id).single();
-      if (existing) { await _supabase.from('consignment_stock').update({ qty_terjual: (existing.qty_terjual || 0) + (d.terjual || 0), qty_retur: (existing.qty_retur || 0) + (d.retur || 0), qty_rusak: (existing.qty_rusak || 0) + (d.rusak || 0), qty_sisa: d.sisa_fisik }).eq('id', existing.id); }
-      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, produk_id: d.produk_id, sales_id: salesId, qty_titip_awal: 0, qty_terjual: d.terjual, qty_retur: d.retur, qty_rusak: d.rusak, qty_sisa: d.sisa_fisik, target_display: d.target_display }); }
+    if (d.sold > 0 || d.damaged > 0 || d.returned > 0) {
+      var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('product_id', d.product_id).single();
+      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (d.sold || 0), qty_returned: (existing.qty_returned || 0) + (d.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (d.damaged || 0), qty_remaining: d.remaining }).eq('id', existing.id); }
+      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: d.product_id, sales_id: salesId, qty_consigned: 0, qty_sold: d.sold, qty_returned: d.returned, qty_damaged: d.damaged, qty_remaining: d.remaining, target_display: d.target_display }); }
     }
-    if (d.retur > 0) {
-      await _supabase.from('returns').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, produk_id: d.produk_id, qty_retur: d.retur, alasan: 'TIDAK_LAKU', tujuan: 'MASUK_GUDANG' });
-      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.produk_id).single();
-      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (d.retur || 0), qty_remaining: (gudang.qty_remaining || 0) + (d.retur || 0) }).eq('id', gudang.id); }
-      else { await _supabase.from('warehouse_stock').insert({ product_id: d.produk_id, qty_in: d.retur, qty_out: 0, qty_remaining: d.retur, unit: 'PCS' }); }
+    if (d.returned > 0) {
+      await _supabase.from('returns').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, product_id: d.product_id, qty: d.returned, reason: 'TIDAK_LAKU', condition: 'MASUK_GUDANG' });
+      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.product_id).single();
+      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (d.returned || 0), qty_remaining: (gudang.qty_remaining || 0) + (d.returned || 0) }).eq('id', gudang.id); }
+      else { await _supabase.from('warehouse_stock').insert({ product_id: d.product_id, qty_in: d.returned, qty_out: 0, qty_remaining: d.returned, unit: 'PCS' }); }
     }
   }
   var invoiceId = null;
   if (invoiceTotal > 0) {
     var tempo = 30;
-    var { data: cust } = await _supabase.from('customers').select('payment_term').eq('customer_id', customerId).single();
+    var { data: cust } = await _supabase.from('customers').select('payment_term').eq('id', customerId).single();
     if (cust?.payment_term) tempo = parseInt(cust.payment_term) || 30;
     var jatuhTempo = new Date(); jatuhTempo.setDate(jatuhTempo.getDate() + tempo);
-    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status_pembayaran: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() }).select().single();
+    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status: 'OPEN', invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() }).select().single();
     if (!invErr && inv) {
       invoiceId = inv.id;
       for (var dd of details || []) {
-        if (dd.terjual > 0) {
-          var { data: prod } = await _supabase.from('products').select('hpp').eq('id', dd.produk_id).single();
+        if (dd.sold > 0) {
+          var { data: prod } = await _supabase.from('products').select('hpp').eq('id', dd.product_id).single();
           var hpp = prod?.hpp || 0;
-          await _supabase.from('invoice_details').insert({ invoice_id: inv.id, produk_id: dd.produk_id, qty: dd.terjual, harga_jual: dd.harga_jual, subtotal: dd.subtotal, hpp_satuan: hpp, laba: dd.subtotal - (dd.terjual * hpp) });
+          await _supabase.from('invoice_details').insert({ invoice_id: inv.id, product_id: dd.product_id, qty: dd.sold, price: dd.price, subtotal: dd.subtotal, hpp: hpp, profit: dd.subtotal - (dd.sold * hpp) });
         }
       }
-      await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total_piutang: invoiceTotal, sisa_piutang: invoiceTotal, status: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() });
+      await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, remaining: invoiceTotal, status: 'OPEN', invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() });
     }
   }
-  await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', visit.id);
   var { data: allProduk } = await _supabase.from('products').select('*');
-  var restockItems = (details || []).filter(function(dd) { return dd.rekomendasi_restock > 0; }).map(function(dd) {
-    var pr = (allProduk || []).filter(function(p) { return p.id === dd.produk_id; })[0] || {};
-    return { produk_id: dd.produk_id, produk_nama: pr.name || dd.produk_id, qty: dd.rekomendasi_restock };
+  var restockItems = (details || []).filter(function(dd) { return dd.restock_recommendation > 0; }).map(function(dd) {
+    var pr = (allProduk || []).filter(function(p) { return p.id === dd.product_id; })[0] || {};
+    return { produk_id: dd.product_id, produk_nama: pr.name || dd.product_id, qty: dd.restock_recommendation };
   });
-  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, invoice_id: invoiceId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, has_restock_recommendation: restockItems.length > 0, restock_items: restockItems }, 'Kunjungan berhasil difinalisasi');
+  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, has_restock_recommendation: restockItems.length > 0, restock_items: restockItems }, 'Kunjungan berhasil difinalisasi');
 };
 
 bridge._actions['cancelKunjungan'] = async (params) => {
   const session = await requireAuth();
-  const { data: visit } = await _supabase.from('visits').select('*').eq('kunjungan_id', params.kunjunganId).single();
+  const { data: visit } = await _supabase.from('visits').select('*').eq('id', params.kunjunganId).single();
   if (!visit) return fail('Kunjungan tidak ditemukan');
   if (session.role === 'SALES' && visit.sales_id !== (session.user?.user_metadata?.sales_id || '')) return fail('Akses ditolak');
-  if (visit.status === 'DRAFT') { await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toTimeString().substring(0, 8) }).eq('kunjungan_id', params.kunjunganId); return ok(null, 'Kunjungan draft dibatalkan'); }
+  if (visit.status === 'DRAFT') { await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', params.kunjunganId); return ok(null, 'Kunjungan draft dibatalkan'); }
   if (visit.status === 'COMPLETED') {
     if (visit.total_invoice > 0) {
-      var { data: invoices } = await _supabase.from('invoices').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
-      for (var inv of invoices || []) { await _supabase.from('invoices').update({ status_pembayaran: 'VOID' }).eq('id', inv.id); await _supabase.from('receivables').update({ status: 'VOID' }).eq('invoice_id', inv.id); }
+      var { data: invoices } = await _supabase.from('invoices').select('*').eq('visit_id', visit.id);
+      for (var inv of invoices || []) { await _supabase.from('invoices').update({ status: 'VOID' }).eq('id', inv.id); await _supabase.from('receivables').update({ status: 'VOID' }).eq('invoice_id', inv.id); }
     }
-    await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toTimeString().substring(0, 8) }).eq('kunjungan_id', params.kunjunganId);
+    await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', params.kunjunganId);
     return ok(null, 'Kunjungan dibatalkan, invoice & piutang dibatalkan');
   }
   return fail('Kunjungan sudah ' + visit.status + ', tidak bisa dibatalkan');
@@ -659,18 +669,18 @@ bridge._actions['cancelKunjungan'] = async (params) => {
 
 bridge._actions['restockFromKunjungan'] = async (params) => {
   const session = await requireAuth();
-  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('kunjungan_id', params.kunjunganId).single();
+  const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('id', params.kunjunganId).single();
   if (!visit || visit.status !== 'COMPLETED') return fail('Kunjungan harus difinalisasi dulu');
-  const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
-  var items = (details || []).filter(function(d) { return d.rekomendasi_restock > 0; }).map(function(d) { return { produk_id: d.produk_id, qty: d.rekomendasi_restock }; });
+  const { data: details } = await _supabase.from('visit_details').select('*').eq('visit_id', visit.id);
+  var items = (details || []).filter(function(d) { return d.restock_recommendation > 0; }).map(function(d) { return { product_id: d.product_id, qty: d.restock_recommendation }; });
   if (!items.length) return fail('Tidak ada rekomendasi restock');
-  var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({ customer_id: visit.customer_id, sales_id: visit.sales_id, type: 'RESTOCK', status: 'SHIPPED', total_items: items.length, total_qty: items.reduce(function(s, i) { return s + i.qty; }, 0), notes: 'Restock otomatis dari kunjungan ' + (visit.kunjungan_id || visit.id) }).select().single();
+  var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({ customer_id: visit.customer_id, sales_id: visit.sales_id, type: 'RESTOCK', status: 'SHIPPED', total_items: items.length, total_qty: items.reduce(function(s, i) { return s + i.qty; }, 0), notes: 'Restock otomatis dari kunjungan ' + visit.id }).select().single();
   if (shpErr) return fail(shpErr.message);
   for (var item of items) {
-    await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
-    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', visit.customer_id).eq('produk_id', item.produk_id).single();
-    if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
-    else { await _supabase.from('consignment_stock').insert({ customer_id: visit.customer_id, produk_id: item.produk_id, sales_id: visit.sales_id, qty_titip_awal: item.qty, qty_terjual: 0, qty_sisa: item.qty }); }
+    await _supabase.from('shipment_details').insert({ shipment_id: shp.id, product_id: item.product_id, qty: item.qty });
+    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', visit.customer_id).eq('product_id', item.product_id).single();
+    if (cs) { await _supabase.from('consignment_stock').update({ qty_consigned: (cs.qty_consigned || 0) + item.qty, qty_remaining: (cs.qty_remaining || 0) + item.qty }).eq('id', cs.id); }
+    else { await _supabase.from('consignment_stock').insert({ customer_id: visit.customer_id, product_id: item.product_id, sales_id: visit.sales_id, qty_consigned: item.qty, qty_sold: 0, qty_remaining: item.qty }); }
   }
   return ok(null, 'Restock berhasil');
 };
@@ -678,11 +688,11 @@ bridge._actions['restockFromKunjungan'] = async (params) => {
 bridge._actions['uploadFotoKunjungan'] = async (params) => {
   var kunjunganId = params.kunjunganId, tipe = params.tipe || 'sebelum', dataUrl = params.dataUrl;
   if (!kunjunganId || !dataUrl) return fail('Parameter kurang');
-  var { data: visit } = await _supabase.from('visits').select('photos').eq('kunjungan_id', kunjunganId).single();
+  var { data: visit } = await _supabase.from('visits').select('photos').eq('id', kunjunganId).single();
   var arr = []; try { arr = JSON.parse(visit?.photos || '[]'); } catch(e) { arr = []; } if (!Array.isArray(arr)) arr = [];
   var entry = { url: dataUrl }; if (params.latitude && params.longitude) { entry.lat = params.latitude; entry.lng = params.longitude; }
   if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); } else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
-  await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('kunjungan_id', kunjunganId);
+  await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('id', kunjunganId);
   return ok(null, 'Foto berhasil diupload');
 };
 
@@ -735,10 +745,10 @@ bridge._actions['getStokKonsinyasi'] = async () => {
 bridge._actions['updateStokKonsinyasi'] = async (params) => {
   const d = params.data || params;
   const { data, error } = await _supabase.from('consignment_stock').update({
-    qty_titip_awal: d.qty_titip,
-    qty_terjual: d.qty_terjual,
-    qty_retur: d.qty_retur,
-    qty_sisa: d.qty_sisa,
+    qty_consigned: d.qty_titip,
+    qty_sold: d.qty_terjual,
+    qty_returned: d.qty_retur,
+    qty_remaining: d.qty_sisa,
     target_display: d.target_display,
   }).eq('id', params.id).select().single();
   if (error) return fail(error.message);
@@ -783,7 +793,7 @@ bridge._actions['createPembayaran'] = async (params) => {
     customer_id: params.customer_id,
     sales_id: params.sales_id,
     amount: params.amount,
-    payment_method: params.metode,
+    method: params.metode,
     notes: params.notes,
     payment_date: new Date().toISOString(),
   }).select().single();
@@ -827,7 +837,7 @@ bridge._actions['createBiaya'] = async (params) => {
     description: params.deskripsi,
     amount: params.jumlah,
     date: params.tanggal || new Date().toISOString(),
-    payment_method: params.metode,
+    method: params.metode,
     notes: params.catatan,
     created_by: session.user.id,
   }).select().single();
@@ -885,10 +895,10 @@ bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) =
   }).select().single();
   if (shpErr) return fail(shpErr.message);
   for (var item of items) {
-    await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
-    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('produk_id', item.produk_id).maybeSingle();
-    if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
-    else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, produk_id: item.produk_id, sales_id: salesId, qty_titip_awal: item.qty, qty_terjual: 0, qty_retur: 0, qty_sisa: item.qty }); }
+    await _supabase.from('shipment_details').insert({ shipment_id: shp.id, product_id: item.produk_id, qty: item.qty });
+    var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('product_id', item.produk_id).maybeSingle();
+    if (cs) { await _supabase.from('consignment_stock').update({ qty_consigned: (cs.qty_consigned || 0) + item.qty, qty_remaining: (cs.qty_remaining || 0) + item.qty }).eq('id', cs.id); }
+    else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, product_id: item.produk_id, sales_id: salesId, qty_consigned: item.qty, qty_sold: 0, qty_returned: 0, qty_remaining: item.qty }); }
   }
   return ok(shp, 'Titipan berhasil');
 };
@@ -909,7 +919,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
     _supabase.from('invoices').select('total').eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
     _supabase.from('expenses').select('amount').gte('date', monthStart),
     _supabase.from('commissions').select('amount, status').gte('created_at', monthStart),
-    _supabase.from('invoice_details').select('produk_id, subtotal, products(hpp)').limit(5).order('subtotal', { ascending: false }),
+    _supabase.from('invoice_details').select('product_id, subtotal, products(hpp)').limit(5).order('subtotal', { ascending: false }),
     _supabase.from('invoices').select('sales_id, total').eq('status', 'PAID').gte('invoice_date', monthStart).limit(5).order('total', { ascending: false }),
     _supabase.from('invoices').select('invoice_date, total').eq('status', 'PAID').gte('invoice_date', new Date(Date.now() - 7*86400000).toISOString().substring(0, 10)).order('invoice_date'),
     _supabase.from('invoices').select('invoice_date, total').eq('status', 'PAID').gte('invoice_date', new Date(Date.now() - 365*86400000).toISOString().substring(0, 10)).order('invoice_date'),
@@ -948,7 +958,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
       stok_konsinyasi: konsinyasi.count || 0,
       komisi_bulan_ini: komisi,
     },
-    top_produk: (topP.data || []).map(function(p){ return { produk_id: p.produk_id, name: p.products?.name || '', total: p.subtotal || 0 }; }),
+    top_produk: (topP.data || []).map(function(p){ return { produk_id: p.product_id, name: p.products?.name || '', total: p.subtotal || 0 }; }),
     top_sales: (topS.data || []).map(function(s){ return { sales_id: s.sales_id, total: s.total || 0 }; }),
     chart_harian: chartHarian,
     chart_bulanan: chartBulanan,
@@ -968,14 +978,14 @@ bridge._actions['getSalesDashboard'] = async () => {
     _supabase.from('customers').select('*').eq('sales_id', profile.sales_id),
     _supabase.from('invoices').select('*').eq('sales_id', profile.sales_id),
     _supabase.from('invoices').select('total').eq('sales_id', profile.sales_id).eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
-    _supabase.from('receivables').select('remaining_amount, invoices!inner(customer_id, sales_id)').eq('invoices.sales_id', profile.sales_id),
-    _supabase.from('consignment_stock').select('qty_sisa').eq('sales_id', profile.sales_id),
+    _supabase.from('receivables').select('remaining, invoices!inner(customer_id, sales_id)').eq('invoices.sales_id', profile.sales_id),
+    _supabase.from('consignment_stock').select('qty_remaining').eq('sales_id', profile.sales_id),
     _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id).gte('created_at', monthStart),
   ]);
 
   var omzet = (monthInv.data || []).reduce(function(s, i){ return s + (i.total || 0); }, 0);
   var piutang = (receivables.data || []).reduce(function(s, r){ return s + (r.remaining_amount || 0); }, 0);
-  var stok = (konsinyasi.data || []).reduce(function(s, k){ return s + (k.qty_sisa || 0); }, 0);
+  var stok = (konsinyasi.data || []).reduce(function(s, k){ return s + (k.qty_remaining || 0); }, 0);
   var komisiReady = (komisi.data || []).filter(function(c){ return c.status === 'READY' || c.status === 'UNPAID'; }).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var komisiPaid = (komisi.data || []).filter(function(c){ return c.status === 'PAID'; }).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var unpaid = (invoices.data || []).filter(function(i){ return i.status === 'UNPAID' || i.status === 'OVERDUE'; }).length;
@@ -1034,13 +1044,13 @@ bridge._actions['generateReport'] = async (params) => {
   switch (params.type) {
     // ── 1. Penjualan Harian (7 hari terakhir) ────────────────────
     case 'penjualan_harian': {
-      const { data: invoices } = await _supabase.from('invoices').select('total, tanggal_invoice');
+      const { data: invoices } = await _supabase.from('invoices').select('total, invoice_date');
       const result = [];
       for (let d = 6; d >= 0; d--) {
         const tgl = new Date(); tgl.setDate(tgl.getDate() - d);
         const tglStr = tgl.toISOString().substring(0, 10);
         const filtered = (invoices || []).filter(function(inv) {
-          return inv.tanggal_invoice && inv.tanggal_invoice.substring(0, 10) === tglStr;
+          return inv.invoice_date && inv.invoice_date.substring(0, 10) === tglStr;
         });
         result.push({
           label: tglStr,
@@ -1052,15 +1062,15 @@ bridge._actions['generateReport'] = async (params) => {
     }
     // ── 2. Penjualan Bulanan (12 bulan) ──────────────────────────
     case 'penjualan_bulanan': {
-      const { data: invoices } = await _supabase.from('invoices').select('total, tanggal_invoice');
+      const { data: invoices } = await _supabase.from('invoices').select('total, invoice_date');
       const result = [];
       for (let m = 11; m >= 0; m--) {
         const d = new Date(); d.setMonth(d.getMonth() - m);
         const bulan = d.getMonth() + 1;
         const tahun = d.getFullYear();
         const filtered = (invoices || []).filter(function(inv) {
-          if (!inv.tanggal_invoice) return false;
-          const id = new Date(inv.tanggal_invoice);
+          if (!inv.invoice_date) return false;
+          const id = new Date(inv.invoice_date);
           return id.getMonth() + 1 === bulan && id.getFullYear() === tahun;
         });
         result.push({
@@ -1073,11 +1083,11 @@ bridge._actions['generateReport'] = async (params) => {
     }
     // ── 3. Penjualan Tahunan ─────────────────────────────────────
     case 'penjualan_tahunan': {
-      const { data: invoices } = await _supabase.from('invoices').select('total, tanggal_invoice');
+      const { data: invoices } = await _supabase.from('invoices').select('total, invoice_date');
       const data = {};
       (invoices || []).forEach(function(inv) {
-        if (!inv.tanggal_invoice) return;
-        const tgl = new Date(inv.tanggal_invoice);
+        if (!inv.invoice_date) return;
+        const tgl = new Date(inv.invoice_date);
         const tahun = '' + tgl.getFullYear();
         if (!data[tahun]) data[tahun] = { tahun: tahun, total: 0, jumlah: 0 };
         data[tahun].total += inv.total || 0;
@@ -1097,7 +1107,7 @@ bridge._actions['generateReport'] = async (params) => {
         }
         data[pid].qty += d.qty || 0;
         data[pid].total += d.subtotal || 0;
-        data[pid].laba += d.laba || 0;
+        data[pid].laba += d.profit || 0;
       });
       return ok(Object.values(data).sort(function(a, b) { return b.total - a.total; }));
     }
@@ -1137,10 +1147,10 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(p) {
         const c = p.customers || {};
         return {
-          piutang_id: p.piutang_id || p.id,
+          piutang_id: p.id,
           customer_nama: c.store_name || c.name || p.customer_id,
-          total_piutang: p.total_piutang || 0,
-          sisa_piutang: p.sisa_piutang || 0,
+          total_piutang: p.total || 0,
+          sisa_piutang: p.remaining || 0,
           status: p.status || ''
         };
       });
@@ -1152,10 +1162,10 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(p) {
         const c = p.customers || {};
         return {
-          pembayaran_id: p.pembayaran_id || p.id,
+          pembayaran_id: p.id,
           customer_nama: c.store_name || c.name || p.customer_id,
           jumlah_bayar: p.amount || 0,
-          metode_bayar: p.payment_method || '',
+          metode_bayar: p.method || '',
           tanggal: p.payment_date || p.created_at || ''
         };
       });
@@ -1167,11 +1177,11 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(k) {
         const s = k.sales || {};
         return {
-          komisi_id: k.komisi_id || k.id,
+          komisi_id: k.id,
           sales_nama: s.full_name || s.name || k.sales_id,
-          nilai_komisi: k.nilai_komisi || 0,
-          periode_bulan: k.periode_bulan || 0,
-          periode_tahun: k.periode_tahun || 0,
+          nilai_komisi: k.amount || 0,
+          periode_bulan: k.period_month || 0,
+          periode_tahun: k.period_year || 0,
           status: k.status || ''
         };
       });
@@ -1183,11 +1193,11 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(r) {
         const p = r.products || {};
         return {
-          retur_id: r.retur_id || r.id,
+          retur_id: r.id,
           produk_nama: p.name || r.product_id,
           customer_id: r.customer_id || '',
-          qty_retur: r.qty_retur || 0,
-          alasan: r.alasan_retur || r.alasan || ''
+          qty_retur: r.qty || 0,
+          alasan: r.reason || ''
         };
       });
       return ok(result);
@@ -1200,25 +1210,25 @@ bridge._actions['generateReport'] = async (params) => {
         const key = d.invoice_id ? d.invoice_id.substring(0, 7) : 'unknown';
         if (!data[key]) data[key] = { periode: key, total_penjualan: 0, total_hpp: 0, laba_kotor: 0 };
         data[key].total_penjualan += d.subtotal || 0;
-        data[key].total_hpp += (d.hpp_satuan || 0) * (d.qty || 0);
-        data[key].laba_kotor += d.laba || 0;
+        data[key].total_hpp += (d.hpp || 0) * (d.qty || 0);
+        data[key].laba_kotor += d.profit || 0;
       });
       return ok(Object.values(data).sort(function(a, b) { return a.periode < b.periode ? -1 : 1; }));
     }
     // ── 12. Laba Bersih ──────────────────────────────────────────
     case 'laba_bersih': {
       const [detailsRes, expensesRes, commissionsRes] = await Promise.all([
-        _supabase.from('invoice_details').select('subtotal, laba'),
+        _supabase.from('invoice_details').select('subtotal, profit'),
         _supabase.from('expenses').select('amount'),
-        _supabase.from('commissions').select('nilai_komisi'),
+        _supabase.from('commissions').select('amount'),
       ]);
       const details = detailsRes.data || [];
       const expenses = expensesRes.data || [];
       const commissions = commissionsRes.data || [];
       const totalPenjualan = details.reduce(function(s, d) { return s + (d.subtotal || 0); }, 0);
-      const totalLabaKotor = details.reduce(function(s, d) { return s + (d.laba || 0); }, 0);
+      const totalLabaKotor = details.reduce(function(s, d) { return s + (d.profit || 0); }, 0);
       const totalBiaya = expenses.reduce(function(s, b) { return s + (b.amount || 0); }, 0);
-      const totalKomisi = commissions.reduce(function(s, k) { return s + (k.nilai_komisi || 0); }, 0);
+      const totalKomisi = commissions.reduce(function(s, k) { return s + (k.amount || 0); }, 0);
       const totalReturCost = 0;
       return ok([{
         total_penjualan: totalPenjualan,
@@ -1231,7 +1241,7 @@ bridge._actions['generateReport'] = async (params) => {
     }
     // ── 13. Omzet Report ─────────────────────────────────────────
     case 'omzet': {
-      const { data: invoices } = await _supabase.from('invoices').select('total, status_pembayaran, tanggal_invoice');
+      const { data: invoices } = await _supabase.from('invoices').select('total, status, invoice_date');
       const now = new Date();
       const startDate = params.tanggal_mulai || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const endDate = params.tanggal_selesai || now.toISOString();
@@ -1239,11 +1249,11 @@ bridge._actions['generateReport'] = async (params) => {
       const endMs = new Date(endDate).getTime();
       var totalOmzet = 0, totalLunas = 0, totalPiutang = 0;
       (invoices || []).forEach(function(inv) {
-        if (!inv.tanggal_invoice) return;
-        const t = new Date(inv.tanggal_invoice).getTime();
+        if (!inv.invoice_date) return;
+        const t = new Date(inv.invoice_date).getTime();
         if (t >= startMs && t <= endMs) {
           totalOmzet += inv.total || 0;
-          if (inv.status_pembayaran === 'PAID') totalLunas += inv.total || 0;
+          if (inv.status === 'PAID') totalLunas += inv.total || 0;
           else totalPiutang += inv.total || 0;
         }
       });
@@ -1278,11 +1288,11 @@ bridge._actions['generateReport'] = async (params) => {
         const p = s.products || {};
         return {
           customer_nama: c.store_name || c.name || s.customer_id,
-          produk_nama: p.name || s.produk_id || s.product_id,
-          qty_titip_awal: s.qty_titip_awal || 0,
-          qty_terjual: s.qty_terjual || 0,
-          qty_retur: s.qty_retur || 0,
-          qty_sisa: s.qty_sisa || 0
+          produk_nama: p.name || s.product_id,
+          qty_titip_awal: s.qty_consigned || 0,
+          qty_terjual: s.qty_sold || 0,
+          qty_retur: s.qty_returned || 0,
+          qty_sisa: s.qty_remaining || 0
         };
       });
       return ok(result);
@@ -1293,7 +1303,7 @@ bridge._actions['generateReport'] = async (params) => {
       const result = [];
       (data || []).forEach(function(s) {
         const target = s.target_display || s.products?.target_display || 20;
-        const sisa = s.qty_sisa || 0;
+        const sisa = s.qty_remaining || 0;
         const rekomendasi = Math.max(0, target - sisa);
         if (rekomendasi > 0) {
           const c = s.customers || {};
@@ -1376,10 +1386,10 @@ bridge._actions['getStockPredictions'] = async () => {
   if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
   const { data: stocks } = await q;
   var predictions = (stocks || []).map(function(s) {
-    var dailyAvg = s.qty_terjual || 0;
-    var daysLeft = dailyAvg > 0 ? Math.floor((s.qty_sisa || 0) / dailyAvg) : 99;
+    var dailyAvg = s.qty_sold || 0;
+    var daysLeft = dailyAvg > 0 ? Math.floor((s.qty_remaining || 0) / dailyAvg) : 99;
     var status = daysLeft <= 7 ? 'HABIS' : daysLeft <= 14 ? 'SEGARA' : 'AMAN';
-    return { stock_id: s.id, customer_id: s.customer_id, store_name: s.customers?.store_name || '', produk_id: s.produk_id, produk_name: s.products?.name || '', qty_sisa: s.qty_sisa || 0, daily_avg_sales: dailyAvg, estimated_days_left: daysLeft, status: status };
+    return { stock_id: s.id, customer_id: s.customer_id, store_name: s.customers?.store_name || '', produk_id: s.product_id, produk_name: s.products?.name || '', qty_sisa: s.qty_remaining || 0, daily_avg_sales: dailyAvg, estimated_days_left: daysLeft, status: status };
   });
   return ok(predictions);
 };
