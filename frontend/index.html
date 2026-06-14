@@ -4701,12 +4701,12 @@ function renderSalesList(data) {
     data.forEach(function(s) {
       var isActive = s.is_active !== false && s.status !== 'NONAKTIF';
       html += '<tr><td>' + (s.code || s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong>' + (!isActive ? ' <small style="color:var(--error)">(nonaktif)</small>' : '') + '</td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + getStatusBadge(isActive ? 'AKTIF' : 'NONAKTIF') + '</td>';
-      html += '<td><button class="btn btn-sm btn-outline" onclick="editSales(\'' + s.sales_id + '\')">Edit</button> ';
+      html += '<td><button class="btn btn-sm btn-outline" onclick="editSales(\'' + s.sales_id + '\')" title="Edit">✏️</button> ';
       if (isActive) {
-        html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')">Nonaktifkan</button>';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')" title="Nonaktifkan">⛔</button>';
       } else {
-        html += '<button class="btn btn-sm btn-success" onclick="aktifkanSales(\'' + s.sales_id + '\')">Aktifkan</button> ';
-        html += '<button class="btn btn-sm btn-danger" onclick="hapusSalesPermanen(\'' + s.sales_id + '\')">Hapus</button>';
+        html += '<button class="btn btn-sm btn-success" onclick="aktifkanSales(\'' + s.sales_id + '\')" title="Aktifkan">✅</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusSalesPermanen(\'' + s.sales_id + '\')" title="Hapus Permanen">🗑️</button>';
       }
       html += '</td></tr>';
     });
