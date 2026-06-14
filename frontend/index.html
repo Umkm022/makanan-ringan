@@ -2314,22 +2314,28 @@ window.goSetup = function goSetup() {
       </div>
       <div class="form-group">
         <label>Nama Lengkap</label>
-        <input type="text" id="setupName" placeholder="Nama owner">
+        <input type="text" id="fullName" placeholder="Nama owner">
       </div>
       <div class="form-group">
         <label>Username</label>
-        <input type="text" id="setupUsername" placeholder="Username untuk login">
+        <input type="text" id="username" placeholder="Username untuk login">
       </div>
       <div class="form-group">
         <label>Email</label>
-        <input type="email" id="setupEmail" placeholder="Email (opsional)">
+        <input type="email" id="email" placeholder="Email (opsional)">
       </div>
       <div class="form-group">
         <label>Password</label>
-        <input type="password" id="setupPassword" placeholder="Minimal 6 karakter">
+        <input type="password" id="password" placeholder="Minimal 6 karakter">
+      </div>
+      <div class="form-group">
+        <label>Konfirmasi Password</label>
+        <input type="password" id="passwordConfirm" placeholder="Ulangi password">
       </div>
       <button class="btn-login" id="btnSetup" onclick="doSetup()">BUAT AKUN OWNER</button>
-      <div class="error-msg" id="setupError"></div>
+      <div class="error-msg" id="errorMsg"></div>
+      <div class="success-msg" id="successMsg" style="display:none;color:#2E7D32;text-align:center;margin-top:12px;"></div>
+      <div id="loadingSpinner" style="display:none;text-align:center;margin-top:12px;">⏳ Memproses...</div>
       <div style="text-align:center;margin-top:16px;">
         <button class="btn-login" style="background:#757575;font-size:14px;padding:12px;" onclick="showLogin()">KEMBALI KE LOGIN</button>
       </div>
@@ -2455,25 +2461,7 @@ function togglePassword(btn){
   if(inp.type==='password'){inp.type='text';btn.textContent='🙈'}else{inp.type='password';btn.textContent='👁️'}
 }
 
-function doSetup(){
-  var n=document.getElementById('setupName').value.trim();
-  var u=document.getElementById('setupUsername').value.trim().toLowerCase();
-  var e=document.getElementById('setupEmail').value.trim();
-  var p=document.getElementById('setupPassword').value;
-  var btn=document.getElementById('btnSetup');
-  var err=document.getElementById('setupError');
-  if(!n){err.textContent='Nama harus diisi';err.style.display='block';return}
-  if(!u||u.length<3){err.textContent='Username minimal 3 karakter';err.style.display='block';return}
-  if(!p||p.length<6){err.textContent='Password minimal 6 karakter';err.style.display='block';return}
-  btn.disabled=true;err.style.display='none';
-  google.script.run.withSuccessHandler(function(r){
-    btn.disabled=false;
-    if(r&&r.success){
-      err.style.color='#2E7D32';err.textContent='Setup berhasil! Silakan login.';err.style.display='block';
-      setTimeout(function(){showPage('login')},2000)
-    }else{err.textContent=(r&&r.message)||'Setup gagal (null response)';err.style.display='block'}
-  }).withFailureHandler(function(e){btn.disabled=false;err.textContent='Error: '+e.message;err.style.display='block'}).setupOwner({fullName:n,username:u,email:e,password:p})
-}
+// doSetup now handled by auth.js
 
 // ====== APP ENTRY ======
 function toggleSidebar(){
