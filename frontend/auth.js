@@ -117,11 +117,18 @@ window.goSetup = function goSetup() {
     if (session) {
       const { data: { user } } = await _supabase.auth.getUser();
       if (user) {
-        const { data: profile } = await _supabase
+        let profile = (await _supabase
           .from('users')
           .select('*')
           .eq('auth_id', user.id)
-          .single();
+          .maybeSingle()).data;
+        if (!profile && user.email) {
+          profile = (await _supabase
+            .from('users')
+            .select('*')
+            .eq('email', user.email)
+            .maybeSingle()).data;
+        }
 
         if (profile) {
           sessionStorage.setItem('seblak_token', session.access_token);

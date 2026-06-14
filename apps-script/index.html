@@ -472,9 +472,15 @@ body.sales-layout .tabbar{display:flex !important}
 .badge-success{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#E8F5E9;color:#2E7D32}
 .badge-warning{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#FFF8E1;color:#F57F17}
 .badge-danger{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#FFEBEE;color:#C62828}
+.badge-primary{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#E3F2FD;color:#1565C0}
 .dark .badge-success{background:#1B5E20;color:#A5D6A7}
 .dark .badge-warning{background:#E65100;color:#FFE0B2}
 .dark .badge-danger{background:#B71C1C;color:#EF9A9A}
+.cart-item{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border:1px solid #E0E0E0;border-radius:8px;margin-bottom:6px}
+.cart-item .info{flex:1}
+.cart-item .info .name{font-weight:600;font-size:13px}
+.cart-item .info .meta{font-size:12px;color:var(--text-light)}
+.cart-total{padding:12px;background:var(--surface);border-radius:8px;border:1px solid #E0E0E0;margin-top:8px}
 .dark .notifPanel{background:#1E1E1E}
 .dark #dashboardAlerts .card[style*="background:#FFF5F5"]{background:#2A1A1A !important;border-color:#4A2A2A !important}
 .dark #dashboardForecast .card div[style*="background:#F5F5F5"]{background:#2A2A2A !important}
@@ -2505,27 +2511,48 @@ var _allCustomers = [];
 function initTitipan(){
   var mc=document.getElementById('mainContent');
   mc.innerHTML='<div class="loading">Memuat...</div>';
+  _titipCart = [];
   loadSalesDropdown('', '', function() {
     loadProdukDropdown('', '', function() {
       api('getCustomers',{},function(rCust){
         _allCustomers = (rCust.success&&rCust.data)?rCust.data:[];
-        var html='<div class="card"><h4>Titip Barang ke Toko</h4>';
-        html+='<div class="form-group"><label>Filter Sales</label><select id="fTitipSales" onchange="filterTitipCust()"></select></div>';
-        html+='<div class="form-group"><label>Toko</label><select id="fTitipCust">'+buildCustOpts()+'</select></div>';
-        html+='<div class="form-group"><label>Tipe</label><select id="fTitipTipe"><option value="AWAL">Titip Awal</option><option value="RESTOCK">Restock</option></select></div>';
-        html+='<div id="titipItems"><div class="card" style="padding:12px"><div class="form-row">';
-        html+='<div class="form-group"><label>Produk</label><select id="titipProd0"></select></div>';
-        html+='<div class="form-group"><label>Jumlah</label><input type="number" id="titipQty0" min="1" value="20"></div>';
-        html+='</div></div></div>';
-        html+='<button class="btn btn-sm btn-outline" onclick="addTitipRow()" style="margin-bottom:12px">+ Tambah Produk</button>';
-        html+='<button class="btn btn-success" onclick="saveTitip()">Simpan Titipan</button>';
-        html+='<div id="titipResult" style="margin-top:12px"></div></div>';
-        mc.innerHTML=html;
-        loadSalesDropdown('fTitipSales', '');
-        loadProdukDropdown('titipProd0', '');
+        renderTitipPage();
       });
     });
   });
+}
+
+var _titipCart = [];
+
+function renderTitipPage() {
+  var mc=document.getElementById('mainContent');
+  var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+  html+='<h3 style="color:var(--primary)">📦 Titipan Keranjang</h3></div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">';
+  // LEFT: form tambah
+  html+='<div class="card"><h4 style="margin-bottom:12px">Tambah ke Keranjang</h4>';
+  html+='<div class="form-group"><label>Filter Sales</label><select id="fTitipSales" onchange="filterTitipCust()"></select></div>';
+  html+='<div class="form-group"><label>Toko</label><select id="fTitipCust">'+buildCustOpts()+'</select></div>';
+  html+='<div class="form-group"><label>Tipe</label><select id="fTitipTipe"><option value="AWAL">Titip Awal</option><option value="RESTOCK">Restock</option></select></div>';
+  html+='<hr style="margin:12px 0">';
+  html+='<div class="form-group"><label>Produk</label><select id="fCartProduk"></select></div>';
+  html+='<div class="form-row"><div class="form-group"><label>Jumlah</label><input type="number" id="fCartQty" min="1" value="20"></div>';
+  html+='<div class="form-group"><label>Harga Satuan</label><input type="number" id="fCartHarga" min="0" value="0" placeholder="Opsional"></div></div>';
+  html+='<button class="btn btn-primary" onclick="tambahKeCart()" style="width:100%">+ Tambah ke Keranjang</button>';
+  html+='</div>';
+  // RIGHT: keranjang
+  html+='<div class="card"><h4 style="margin-bottom:12px">🛒 Keranjang <span id="cartCount" class="badge badge-primary" style="margin-left:8px">0</span></h4>';
+  html+='<div id="cartItems"></div>';
+  html+='<div id="cartSummary" class="cart-total" style="display:none">';
+  html+='<p><strong>Total Item: </strong><span id="cartTotalItem">0</span></p>';
+  html+='<p><strong>Total Qty: </strong><span id="cartTotalQty">0</span></p>';
+  html+='</div>';
+  html+='<button class="btn btn-success" onclick="simpanTitipCart()" id="btnSimpanTitip" disabled style="margin-top:8px;width:100%">Simpan Titipan</button>';
+  html+='<div id="titipResult" style="margin-top:8px"></div>';
+  html+='</div></div>';
+  mc.innerHTML=html;
+  loadSalesDropdown('fTitipSales', '');
+  loadProdukDropdown('fCartProduk', '');
 }
 
 function buildCustOpts(filterSalesId){
@@ -2541,31 +2568,84 @@ function filterTitipCust(){
   var salesId=document.getElementById('fTitipSales').value;
   document.getElementById('fTitipCust').innerHTML=buildCustOpts(salesId);
 }
-var _titipRow=1;
-function addTitipRow(){
-  loadProdukDropdown('', '', function() {
-    var el=document.getElementById('titipItems');
-    el.innerHTML+='<div class="card" style="padding:12px"><div class="form-row"><div class="form-group"><label>Produk</label><select id="titipProd'+_titipRow+'"></select></div><div class="form-group"><label>Jumlah</label><input type="number" id="titipQty'+_titipRow+'" min="1" value="20"></div></div></div>';
-    loadProdukDropdown('titipProd'+_titipRow, '');
-    _titipRow++;
-  });
+
+function tambahKeCart() {
+  var prodEl=document.getElementById('fCartProduk');
+  var qtyEl=document.getElementById('fCartQty');
+  var hargaEl=document.getElementById('fCartHarga');
+  if(!prodEl||!prodEl.value){toast('Pilih produk');return}
+  var qty=parseFloat(qtyEl.value);
+  if(!qty||qty<1){toast('Jumlah minimal 1');return}
+  var harga=parseFloat(hargaEl.value)||0;
+  // cari nama produk dari cache / dropdown
+  var namaProduk=prodEl.options[prodEl.selectedIndex]?.text||prodEl.value;
+  var idx=_titipCart.findIndex(function(i){return i.produk_id===prodEl.value});
+  if(idx>-1){
+    _titipCart[idx].qty+=qty;
+    if(harga)_titipCart[idx].harga_satuan=harga;
+  } else {
+    _titipCart.push({produk_id:prodEl.value,nama_produk:namaProduk,qty:qty,harga_satuan:harga});
+  }
+  qtyEl.value='20';
+  hargaEl.value='0';
+  renderCart();
+  toast('Ditambahkan ke keranjang');
 }
-function saveTitip(){
+
+function hapusDariCart(idx) {
+  _titipCart.splice(idx,1);
+  renderCart();
+}
+
+function renderCart() {
+  var el=document.getElementById('cartItems');
+  var countEl=document.getElementById('cartCount');
+  var totalItemEl=document.getElementById('cartTotalItem');
+  var totalQtyEl=document.getElementById('cartTotalQty');
+  var summaryEl=document.getElementById('cartSummary');
+  var btnEl=document.getElementById('btnSimpanTitip');
+  if(!el)return;
+  if(_titipCart.length===0){
+    el.innerHTML='<p style="color:var(--text-light);text-align:center;padding:20px 0">Keranjang kosong</p>';
+    if(countEl)countEl.textContent='0';
+    if(summaryEl)summaryEl.style.display='none';
+    if(btnEl)btnEl.disabled=true;
+    return;
+  }
+  var totalQty=0;
+  var html='';
+  _titipCart.forEach(function(item,i){
+    totalQty+=item.qty;
+    html+='<div class="cart-item">';
+    html+='<div class="info"><div class="name">'+item.nama_produk+'</div>';
+    html+='<div class="meta">'+item.qty+' pcs'+(item.harga_satuan>0?' × Rp '+fmt(item.harga_satuan):'')+'</div></div>';
+    html+='<button class="btn btn-sm btn-danger" onclick="hapusDariCart('+i+')" style="min-width:32px">✕</button>';
+    html+='</div>';
+  });
+  el.innerHTML=html;
+  if(countEl)countEl.textContent=_titipCart.length;
+  if(totalItemEl)totalItemEl.textContent=_titipCart.length+' item';
+  if(totalQtyEl)totalQtyEl.textContent=totalQty+' pcs';
+  if(summaryEl)summaryEl.style.display='block';
+  if(btnEl)btnEl.disabled=false;
+}
+
+function simpanTitipCart(){
   var customerId=document.getElementById('fTitipCust').value;
   if(!customerId){toast('Pilih toko');return}
-  var items=[];
-  for(var i=0;i<_titipRow;i++){
-    var elProd=document.getElementById('titipProd'+i);
-    var elQty=document.getElementById('titipQty'+i);
-    if(elProd&&elQty&&elProd.value&&elQty.value>0)items.push({produk_id:elProd.value,qty:parseFloat(elQty.value)});
-  }
-  if(items.length===0){toast('Tambah minimal 1 produk');return}
+  if(_titipCart.length===0){toast('Keranjang kosong');return}
+  var items=_titipCart.map(function(i){return{produk_id:i.produk_id,qty:i.qty,harga_satuan:i.harga_satuan||undefined};});
   var el=document.getElementById('titipResult');
   el.innerHTML='<div class="loading">Menyimpan...</div>';
+  var btnEl=document.getElementById('btnSimpanTitip');
+  if(btnEl)btnEl.disabled=true;
   api('createTitip',{data:{customer_id:customerId,tipe:document.getElementById('fTitipTipe').value,items:items}},function(r){
-    if(!r.success){el.innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';return}
+    if(!r.success){el.innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';if(btnEl)btnEl.disabled=false;return}
     el.innerHTML='<p style="color:var(--success);font-weight:600">✅ '+r.message+'</p>';
+    _titipCart=[];
+    renderCart();
     invalidateCache('titipan'); toast('Titipan berhasil');
+    if(btnEl)btnEl.disabled=false;
   });
 }
 
@@ -2903,9 +2983,16 @@ function renderSalesList(data) {
   if (data.length === 0) { html += '<div class="card"><p style="color:var(--text-light)">Belum ada sales.</p></div>'; } else {
     html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama</th><th>Telepon</th><th>Rate</th><th>Target</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
-      html += '<tr><td>' + (s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong></td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + (s.status || '') + '</td>';
+      var isActive = s.is_active !== false && s.status !== 'NONAKTIF';
+      html += '<tr><td>' + (s.code || s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong>' + (!isActive ? ' <small style="color:var(--error)">(nonaktif)</small>' : '') + '</td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + getStatusBadge(isActive ? 'AKTIF' : 'NONAKTIF') + '</td>';
       html += '<td><button class="btn btn-sm btn-outline" onclick="editSales(\'' + s.sales_id + '\')">Edit</button> ';
-      html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')">Nonaktifkan</button></td></tr>';
+      if (isActive) {
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')">Nonaktifkan</button>';
+      } else {
+        html += '<button class="btn btn-sm btn-success" onclick="aktifkanSales(\'' + s.sales_id + '\')">Aktifkan</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusSalesPermanen(\'' + s.sales_id + '\')">Hapus</button>';
+      }
+      html += '</td></tr>';
     });
     html += '</tbody></table></div></div>';
   }
@@ -2968,6 +3055,15 @@ function simpanSalesEdit(id) {
 }
 function hapusSales(id) {
   confirmAndDelete('deleteSales', id, 'sales-list', 'Nonaktifkan sales ini?');
+}
+function aktifkanSales(id) {
+  api('activateSales', {id: id}, function(r) {
+    if (r.success) { toast('✅ Sales berhasil diaktifkan'); invalidateCache('sales-list'); initSalesList(true); }
+    else { toast(r.message || 'Gagal mengaktifkan'); }
+  });
+}
+function hapusSalesPermanen(id) {
+  confirmAndDelete('hardDeleteSales', id, 'sales-list', 'Hapus PERMANEN sales ini?\nData terkait akan dihapus dan tidak bisa dikembalikan!');
 }
 
 // ====== BIAYA OPERASIONAL ======

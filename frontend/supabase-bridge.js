@@ -140,13 +140,23 @@ async function requireAuth() {
 // ── Helper: get current user with profile ──────────────────────────
 async function getCurrentProfile() {
   const session = await requireAuth();
+  // Try auth_id lookup first (fast path)
   const { data: users, error } = await _supabase
     .from('users')
     .select('*')
     .eq('auth_id', session.user.id)
-    .single();
-  if (error) throw new Error('User profile not found');
-  return users;
+    .maybeSingle();
+  if (users) return users;
+  // Fallback: look up by email (handles missing auth_id)
+  if (session.user.email) {
+    const { data: byEmail } = await _supabase
+      .from('users')
+      .select('*')
+      .eq('email', session.user.email)
+      .maybeSingle();
+    if (byEmail) return byEmail;
+  }
+  throw new Error('User profile not found');
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -387,8 +397,24 @@ bridge._actions['createKategori'] = async (params) => {
 // ═══════════════════════════════════════════════════════════════════
 
 bridge._actions['getSales'] = bridge._actions['getSalesList'] = async () => {
-  const { data } = await _supabase.from('sales').select('*, users(*)');
-  const mapped = (data || []).map(s => mapFields(s, salesMap));
+  // Ambil dari users dengan role SALES (termasuk yg dinonaktifkan)
+  const { data: users } = await _supabase.from('users').select('*, sales(*)').eq('role', 'SALES').order('created_at', { ascending: false });
+  const mapped = (users || []).map(u => {
+    const s = u.sales || {};
+    return {
+      sales_id: s.id || u.sales_id,
+      code: s.code || '',
+      full_name: u.full_name || s.full_name || '',
+      phone: u.phone || s.phone || '',
+      address: s.address || '',
+      kota: s.city || '',
+      komisi_rate: s.komisi_rate || 0,
+      target_bulanan: s.target_bulanan || 0,
+      status: s.status || (u.is_active ? 'AKTIF' : 'NONAKTIF'),
+      users: u,
+      is_active: u.is_active,
+    };
+  });
   return ok(mapped);
 };
 
@@ -399,15 +425,9 @@ bridge._actions['getSalesById'] = async (params) => {
 
 bridge._actions['createSales'] = async (params) => {
   const d = params.data || params;
-  var email = d.email || d.username + '@sales.local';
   var password = d.password || 'seblak123';
-  // Create Supabase Auth account
-  var { data: authData, error: authErr } = await _supabase.auth.signUp({ email: email, password: password });
-  if (authErr) return fail(authErr.message);
-  // Generate sales code
   var { count } = await _supabase.from('sales').select('*', { count: 'exact', head: true });
   var salesCode = 'SLS-' + String(count + 1).padStart(3, '0');
-  // Insert into sales table
   var { data: salesData, error: salesErr } = await _supabase.from('sales').insert({
     code: d.sales_code || salesCode,
     full_name: d.full_name,
@@ -419,10 +439,24 @@ bridge._actions['createSales'] = async (params) => {
     status: d.status || 'AKTIF',
   }).select().single();
   if (salesErr) return fail(salesErr.message);
-  // Create user record linked to both auth and sales
+  var baseUsername = (d.username || d.full_name || '').toLowerCase().replace(/[^a-z0-9]/g, '') || salesCode.toLowerCase();
+  var finalUsername = baseUsername;
+  for (var u = 1; u < 100; u++) {
+    var { data: dup } = await _supabase.from('users').select('id').eq('username', finalUsername).maybeSingle();
+    if (!dup) break;
+    finalUsername = baseUsername + '_' + u;
+  }
+  var email = d.email || finalUsername + '@seblak.sales';
+  var authId = null;
+  for (var attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
+    var { data: authData, error: authErr } = await _supabase.auth.signUp({ email: email, password: password });
+    if (!authErr) { authId = authData.user.id; break; }
+    if (!authErr.message?.toLowerCase().includes('rate')) return fail(authErr.message);
+  }
   var { error: userErr } = await _supabase.from('users').insert({
-    auth_id: authData.user.id,
-    username: d.username || d.full_name?.toLowerCase().replace(/\s+/g, ''),
+    auth_id: authId,
+    username: finalUsername,
     email: email,
     role: 'SALES',
     full_name: d.full_name,
@@ -430,7 +464,9 @@ bridge._actions['createSales'] = async (params) => {
     is_active: true,
   });
   if (userErr) return fail(userErr.message);
-  return ok(salesData, 'Sales berhasil dibuat');
+  var msg = 'Sales berhasil dibuat';
+  if (!authId) msg += '. Akun login gagal dibuat (rate limit), silakan coba lagi nanti.';
+  return ok(salesData, msg);
 };
 
 bridge._actions['updateSales'] = async (params) => {
@@ -448,10 +484,24 @@ bridge._actions['updateSales'] = async (params) => {
 };
 
 bridge._actions['deleteSales'] = async (params) => {
-  await _supabase.from('users').update({ sales_id: null, is_active: false }).eq('sales_id', params.id);
+  // Soft delete: nonaktifkan sales + user
+  await _supabase.from('users').update({ is_active: false }).eq('sales_id', params.id);
+  const { error } = await _supabase.from('sales').update({ status: 'NONAKTIF' }).eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Sales berhasil dinonaktifkan');
+};
+bridge._actions['activateSales'] = async (params) => {
+  await _supabase.from('users').update({ is_active: true }).eq('sales_id', params.id);
+  const { error } = await _supabase.from('sales').update({ status: 'AKTIF' }).eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Sales berhasil diaktifkan');
+};
+bridge._actions['hardDeleteSales'] = async (params) => {
+  // Hapus permanen: user + sales record
+  await _supabase.from('users').delete().eq('sales_id', params.id);
   const { error } = await _supabase.from('sales').delete().eq('id', params.id);
   if (error) return fail(error.message);
-  return ok(null, 'Sales berhasil dihapus');
+  return ok(null, 'Sales berhasil dihapus permanen');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -884,7 +934,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
     var md = new Date(today); md.setMonth(md.getMonth() - m);
     var ms = md.toISOString().substring(0, 7);
     var monthTotal = (chartM.data || []).filter(function(inv){ return (inv.invoice_date || '').substring(0, 7) === ms; }).reduce(function(s, inv){ return s + (inv.total || 0); }, 0);
-    chartBulanan.push({ month: ms, total: monthTotal });
+    chartBulanan.push({ label: ms, total: monthTotal });
   }
 
   return ok({

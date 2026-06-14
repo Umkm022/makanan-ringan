@@ -472,9 +472,15 @@ body.sales-layout .tabbar{display:flex !important}
 .badge-success{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#E8F5E9;color:#2E7D32}
 .badge-warning{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#FFF8E1;color:#F57F17}
 .badge-danger{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#FFEBEE;color:#C62828}
+.badge-primary{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#E3F2FD;color:#1565C0}
 .dark .badge-success{background:#1B5E20;color:#A5D6A7}
 .dark .badge-warning{background:#E65100;color:#FFE0B2}
 .dark .badge-danger{background:#B71C1C;color:#EF9A9A}
+.cart-item{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border:1px solid #E0E0E0;border-radius:8px;margin-bottom:6px}
+.cart-item .info{flex:1}
+.cart-item .info .name{font-weight:600;font-size:13px}
+.cart-item .info .meta{font-size:12px;color:var(--text-light)}
+.cart-total{padding:12px;background:var(--surface);border-radius:8px;border:1px solid #E0E0E0;margin-top:8px}
 .dark .notifPanel{background:#1E1E1E}
 .dark #dashboardAlerts .card[style*="background:#FFF5F5"]{background:#2A1A1A !important;border-color:#4A2A2A !important}
 .dark #dashboardForecast .card div[style*="background:#F5F5F5"]{background:#2A2A2A !important}
@@ -651,13 +657,23 @@ async function requireAuth() {
 // ── Helper: get current user with profile ──────────────────────────
 async function getCurrentProfile() {
   const session = await requireAuth();
+  // Try auth_id lookup first (fast path)
   const { data: users, error } = await _supabase
     .from('users')
     .select('*')
     .eq('auth_id', session.user.id)
-    .single();
-  if (error) throw new Error('User profile not found');
-  return users;
+    .maybeSingle();
+  if (users) return users;
+  // Fallback: look up by email (handles missing auth_id)
+  if (session.user.email) {
+    const { data: byEmail } = await _supabase
+      .from('users')
+      .select('*')
+      .eq('email', session.user.email)
+      .maybeSingle();
+    if (byEmail) return byEmail;
+  }
+  throw new Error('User profile not found');
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -898,8 +914,24 @@ bridge._actions['createKategori'] = async (params) => {
 // ═══════════════════════════════════════════════════════════════════
 
 bridge._actions['getSales'] = bridge._actions['getSalesList'] = async () => {
-  const { data } = await _supabase.from('sales').select('*, users(*)');
-  const mapped = (data || []).map(s => mapFields(s, salesMap));
+  // Ambil dari users dengan role SALES (termasuk yg dinonaktifkan)
+  const { data: users } = await _supabase.from('users').select('*, sales(*)').eq('role', 'SALES').order('created_at', { ascending: false });
+  const mapped = (users || []).map(u => {
+    const s = u.sales || {};
+    return {
+      sales_id: s.id || u.sales_id,
+      code: s.code || '',
+      full_name: u.full_name || s.full_name || '',
+      phone: u.phone || s.phone || '',
+      address: s.address || '',
+      kota: s.city || '',
+      komisi_rate: s.komisi_rate || 0,
+      target_bulanan: s.target_bulanan || 0,
+      status: s.status || (u.is_active ? 'AKTIF' : 'NONAKTIF'),
+      users: u,
+      is_active: u.is_active,
+    };
+  });
   return ok(mapped);
 };
 
@@ -910,10 +942,7 @@ bridge._actions['getSalesById'] = async (params) => {
 
 bridge._actions['createSales'] = async (params) => {
   const d = params.data || params;
-  var email = d.email || d.username + '@sales.local';
   var password = d.password || 'seblak123';
-  var { data: authData, error: authErr } = await _supabase.auth.signUp({ email: email, password: password });
-  if (authErr) return fail(authErr.message);
   var { count } = await _supabase.from('sales').select('*', { count: 'exact', head: true });
   var salesCode = 'SLS-' + String(count + 1).padStart(3, '0');
   var { data: salesData, error: salesErr } = await _supabase.from('sales').insert({
@@ -927,9 +956,24 @@ bridge._actions['createSales'] = async (params) => {
     status: d.status || 'AKTIF',
   }).select().single();
   if (salesErr) return fail(salesErr.message);
+  var baseUsername = (d.username || d.full_name || '').toLowerCase().replace(/[^a-z0-9]/g, '') || salesCode.toLowerCase();
+  var finalUsername = baseUsername;
+  for (var u = 1; u < 100; u++) {
+    var { data: dup } = await _supabase.from('users').select('id').eq('username', finalUsername).maybeSingle();
+    if (!dup) break;
+    finalUsername = baseUsername + '_' + u;
+  }
+  var email = d.email || finalUsername + '@seblak.sales';
+  var authId = null;
+  for (var attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
+    var { data: authData, error: authErr } = await _supabase.auth.signUp({ email: email, password: password });
+    if (!authErr) { authId = authData.user.id; break; }
+    if (!authErr.message?.toLowerCase().includes('rate')) return fail(authErr.message);
+  }
   var { error: userErr } = await _supabase.from('users').insert({
-    auth_id: authData.user.id,
-    username: d.username || d.full_name?.toLowerCase().replace(/\s+/g, ''),
+    auth_id: authId,
+    username: finalUsername,
     email: email,
     role: 'SALES',
     full_name: d.full_name,
@@ -937,7 +981,9 @@ bridge._actions['createSales'] = async (params) => {
     is_active: true,
   });
   if (userErr) return fail(userErr.message);
-  return ok(salesData, 'Sales berhasil dibuat');
+  var msg = 'Sales berhasil dibuat';
+  if (!authId) msg += '. Akun login gagal dibuat (rate limit), silakan coba lagi nanti.';
+  return ok(salesData, msg);
 };
 
 bridge._actions['updateSales'] = async (params) => {
@@ -955,12 +1001,24 @@ bridge._actions['updateSales'] = async (params) => {
 };
 
 bridge._actions['deleteSales'] = async (params) => {
-  // First nullify the users record so login stops working
-  await _supabase.from('users').update({ sales_id: null, is_active: false }).eq('sales_id', params.id);
-  // Then delete the sales record
+  // Soft delete: nonaktifkan sales + user
+  await _supabase.from('users').update({ is_active: false }).eq('sales_id', params.id);
+  const { error } = await _supabase.from('sales').update({ status: 'NONAKTIF' }).eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Sales berhasil dinonaktifkan');
+};
+bridge._actions['activateSales'] = async (params) => {
+  await _supabase.from('users').update({ is_active: true }).eq('sales_id', params.id);
+  const { error } = await _supabase.from('sales').update({ status: 'AKTIF' }).eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Sales berhasil diaktifkan');
+};
+bridge._actions['hardDeleteSales'] = async (params) => {
+  // Hapus permanen: user + sales record
+  await _supabase.from('users').delete().eq('sales_id', params.id);
   const { error } = await _supabase.from('sales').delete().eq('id', params.id);
   if (error) return fail(error.message);
-  return ok(null, 'Sales berhasil dihapus');
+  return ok(null, 'Sales berhasil dihapus permanen');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1012,52 +1070,25 @@ bridge._actions['startKunjungan'] = async (params) => {
   const { data: customer } = await _supabase.from('customers').select('*, sales(full_name)').eq('id', params.customerId).single();
   if (!customer) return fail('Customer tidak ditemukan');
   if (profile.role === 'SALES' && customer.sales_id !== profile.sales_id) return fail('Akses ditolak: bukan customer Anda');
-
   const { data: visit, error } = await _supabase.from('visits').insert({
-    customer_id: customer.id,
-    sales_id: customer.sales_id,
-    visit_date: new Date().toISOString().substring(0, 10),
-    start_time: new Date().toISOString(),
-    status: 'DRAFT',
-    latitude: params.latitude || '',
-    longitude: params.longitude || '',
+    customer_id: customer.id, sales_id: customer.sales_id,
+    visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toISOString(),
+    status: 'DRAFT', latitude: params.latitude || '', longitude: params.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
-
   const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.id);
   const { data: allProduk } = await _supabase.from('products').select('*').eq('is_active', true);
   var produk = (allProduk || []).map(function(p) {
     var sk = (stokAll || []).filter(function(s) { return s.produk_id === p.id; })[0] || {};
-    return {
-      produk_id: p.id,
-      nama_produk: p.name,
-      stok_awal: sk.qty_sisa || 0,
-      target_display: sk.target_display || p.target_display || 20,
-      harga_jual: p.selling_price || 0,
-      hpp: p.hpp || 0
-    };
+    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_sisa || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.selling_price || 0, hpp: p.hpp || 0 };
   });
-
-  return ok({
-    kunjungan_id: visit.kunjungan_id || visit.id,
-    customer: {
-      customer_id: customer.id,
-      store_name: customer.store_name,
-      owner_name: customer.owner_name,
-      address: customer.address,
-      kota: customer.city
-    },
-    produk: produk,
-    last_visit: customer.last_visit
-  });
+  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: { customer_id: customer.id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
 };
 
 bridge._actions['saveSisaStok'] = async (params) => {
-  const session = await requireAuth();
   var items = params.items || [];
   if (!items.length) return fail('Tidak ada data produk');
   var totalTerjual = 0, totalRetur = 0, totalInvoice = 0;
-  // Delete existing details
   await _supabase.from('visit_details').delete().eq('kunjungan_id', params.kunjunganId);
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
@@ -1065,53 +1096,26 @@ bridge._actions['saveSisaStok'] = async (params) => {
     var restock = Math.max(0, item.target_display - item.sisa_fisik);
     var subtotal = terjual * item.harga_jual;
     var { error } = await _supabase.from('visit_details').insert({
-      kunjungan_id: params.kunjunganId,
-      produk_id: item.produk_id,
-      stok_awal: item.stok_awal,
-      sisa_fisik: item.sisa_fisik,
-      rusak: item.rusak || 0,
-      retur: item.retur || 0,
-      terjual: terjual,
-      target_display: item.target_display,
-      rekomendasi_restock: restock,
-      harga_jual: item.harga_jual,
-      subtotal: subtotal,
+      kunjungan_id: params.kunjunganId, produk_id: item.produk_id, stok_awal: item.stok_awal, sisa_fisik: item.sisa_fisik,
+      rusak: item.rusak || 0, retur: item.retur || 0, terjual: terjual, target_display: item.target_display,
+      rekomendasi_restock: restock, harga_jual: item.harga_jual, subtotal: subtotal,
     });
     if (error) return fail(error.message);
-    totalTerjual += terjual;
-    totalRetur += (item.retur || 0);
-    totalInvoice += subtotal;
+    totalTerjual += terjual; totalRetur += (item.retur || 0); totalInvoice += subtotal;
   }
-  // Update visit header totals
-  await _supabase.from('visits').update({
-    total_sold: totalTerjual,
-    total_return: totalRetur,
-    total_invoice: totalInvoice,
-  }).eq('kunjungan_id', params.kunjunganId);
+  await _supabase.from('visits').update({ total_sold: totalTerjual, total_return: totalRetur, total_invoice: totalInvoice }).eq('kunjungan_id', params.kunjunganId);
   return ok({ total_terjual: totalTerjual, total_retur: totalRetur, total_invoice: totalInvoice });
 };
 
 bridge._actions['resumeKunjungan'] = async (params) => {
   const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('id', params.kunjunganId).single();
-  if (!visit) return fail('Kunjungan tidak ditemukan');
-  if (visit.status !== 'DRAFT') return fail('Kunjungan bukan DRAFT');
+  if (!visit || visit.status !== 'DRAFT') return fail('Kunjungan tidak ditemukan atau bukan DRAFT');
   const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
   const { data: allProduk } = await _supabase.from('products').select('*');
   var customer = visit.customers ? { customer_id: visit.customers.customer_id, store_name: visit.customers.store_name, owner_name: visit.customers.owner_name, address: visit.customers.address, kota: visit.customers.city } : {};
   var produk = (details || []).map(function(d) {
     var pr = (allProduk || []).filter(function(p) { return p.id === d.produk_id; })[0] || {};
-    return {
-      produk_id: d.produk_id,
-      nama_produk: pr.name || d.produk_id,
-      stok_awal: d.stok_awal,
-      sisa_fisik: d.sisa_fisik,
-      rusak: d.rusak,
-      retur: d.retur,
-      terjual: d.terjual,
-      target_display: d.target_display,
-      rekomendasi_restock: d.rekomendasi_restock,
-      harga_jual: d.harga_jual
-    };
+    return { produk_id: d.produk_id, nama_produk: pr.name || d.produk_id, stok_awal: d.stok_awal, sisa_fisik: d.sisa_fisik, rusak: d.rusak, retur: d.retur, terjual: d.terjual, target_display: d.target_display, rekomendasi_restock: d.rekomendasi_restock, harga_jual: d.harga_jual };
   });
   return ok({ kunjungan_id: visit.kunjungan_id || visit.id, customer: customer, produk: produk, last_visit: visit.visit_date });
 };
@@ -1121,94 +1125,47 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   const { data: visit } = await _supabase.from('visits').select('*, customers(*), sales(*)').eq('kunjungan_id', params.kunjunganId).single();
   if (!visit) return fail('Kunjungan tidak ditemukan');
   if (visit.status !== 'DRAFT') return fail('Kunjungan sudah difinalisasi');
-  var customerId = visit.customer_id, salesId = visit.sales_id;
-  var invoiceTotal = visit.total_invoice || 0;
+  var customerId = visit.customer_id, salesId = visit.sales_id, invoiceTotal = visit.total_invoice || 0;
   const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
-  // Update consignment stock
   for (var d of details || []) {
     if (d.terjual > 0 || d.rusak > 0 || d.retur > 0) {
       var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('produk_id', d.produk_id).single();
-      if (existing) {
-        await _supabase.from('consignment_stock').update({
-          qty_terjual: (existing.qty_terjual || 0) + (d.terjual || 0),
-          qty_retur: (existing.qty_retur || 0) + (d.retur || 0),
-          qty_rusak: (existing.qty_rusak || 0) + (d.rusak || 0),
-          qty_sisa: d.sisa_fisik,
-        }).eq('id', existing.id);
-      } else {
-        await _supabase.from('consignment_stock').insert({
-          customer_id: customerId, produk_id: d.produk_id, sales_id: salesId,
-          qty_titip_awal: 0, qty_terjual: d.terjual, qty_retur: d.retur, qty_rusak: d.rusak, qty_sisa: d.sisa_fisik,
-          target_display: d.target_display,
-        });
-      }
+      if (existing) { await _supabase.from('consignment_stock').update({ qty_terjual: (existing.qty_terjual || 0) + (d.terjual || 0), qty_retur: (existing.qty_retur || 0) + (d.retur || 0), qty_rusak: (existing.qty_rusak || 0) + (d.rusak || 0), qty_sisa: d.sisa_fisik }).eq('id', existing.id); }
+      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, produk_id: d.produk_id, sales_id: salesId, qty_titip_awal: 0, qty_terjual: d.terjual, qty_retur: d.retur, qty_rusak: d.rusak, qty_sisa: d.sisa_fisik, target_display: d.target_display }); }
     }
-    // Process returns -> add to warehouse
     if (d.retur > 0) {
-      await _supabase.from('returns').insert({
-        kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId,
-        produk_id: d.produk_id, qty_retur: d.retur, alasan: 'TIDAK_LAKU', tujuan: 'MASUK_GUDANG',
-      });
+      await _supabase.from('returns').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, produk_id: d.produk_id, qty_retur: d.retur, alasan: 'TIDAK_LAKU', tujuan: 'MASUK_GUDANG' });
       var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('produk_id', d.produk_id).single();
-      if (gudang) {
-        await _supabase.from('warehouse_stock').update({
-          qty_in: (gudang.qty_in || 0) + (d.retur || 0),
-          qty_remaining: (gudang.qty_remaining || 0) + (d.retur || 0),
-        }).eq('id', gudang.id);
-      } else {
-        await _supabase.from('warehouse_stock').insert({
-          produk_id: d.produk_id, qty_in: d.retur, qty_out: 0, qty_remaining: d.retur, unit: 'PCS',
-        });
-      }
+      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (d.retur || 0), qty_remaining: (gudang.qty_remaining || 0) + (d.retur || 0) }).eq('id', gudang.id); }
+      else { await _supabase.from('warehouse_stock').insert({ produk_id: d.produk_id, qty_in: d.retur, qty_out: 0, qty_remaining: d.retur, unit: 'PCS' }); }
     }
   }
-  // Generate invoice
   var invoiceId = null;
   if (invoiceTotal > 0) {
     var tempo = 30;
     var { data: cust } = await _supabase.from('customers').select('payment_term').eq('customer_id', customerId).single();
     if (cust?.payment_term) tempo = parseInt(cust.payment_term) || 30;
     var jatuhTempo = new Date(); jatuhTempo.setDate(jatuhTempo.getDate() + tempo);
-    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({
-      kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId,
-      total: invoiceTotal, status_pembayaran: 'OPEN', tanggal_invoice: new Date().toISOString(),
-      tanggal_jatuh_tempo: jatuhTempo.toISOString(),
-    }).select().single();
+    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status_pembayaran: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() }).select().single();
     if (!invErr && inv) {
       invoiceId = inv.id;
       for (var dd of details || []) {
         if (dd.terjual > 0) {
           var { data: prod } = await _supabase.from('products').select('hpp').eq('id', dd.produk_id).single();
           var hpp = prod?.hpp || 0;
-          await _supabase.from('invoice_details').insert({
-            invoice_id: inv.id, produk_id: dd.produk_id, qty: dd.terjual, harga_jual: dd.harga_jual,
-            subtotal: dd.subtotal, hpp_satuan: hpp, laba: dd.subtotal - (dd.terjual * hpp),
-          });
+          await _supabase.from('invoice_details').insert({ invoice_id: inv.id, produk_id: dd.produk_id, qty: dd.terjual, harga_jual: dd.harga_jual, subtotal: dd.subtotal, hpp_satuan: hpp, laba: dd.subtotal - (dd.terjual * hpp) });
         }
       }
-      // Create receivables
-      await _supabase.from('receivables').insert({
-        invoice_id: inv.id, customer_id: customerId, sales_id: salesId,
-        total_piutang: invoiceTotal, sisa_piutang: invoiceTotal, status: 'OPEN',
-        tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString(),
-      });
+      await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total_piutang: invoiceTotal, sisa_piutang: invoiceTotal, status: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() });
     }
   }
-  // Update visit status
-  await _supabase.from('visits').update({
-    status: 'COMPLETED', end_time: new Date().toISOString(),
-  }).eq('kunjungan_id', visit.kunjungan_id || visit.id);
-  // Build restock recommendation
+  await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toISOString() }).eq('kunjungan_id', visit.kunjungan_id || visit.id);
   var { data: allProduk } = await _supabase.from('products').select('*');
   var restockItems = (details || []).filter(function(dd) { return dd.rekomendasi_restock > 0; }).map(function(dd) {
     var pr = (allProduk || []).filter(function(p) { return p.id === dd.produk_id; })[0] || {};
     return { produk_id: dd.produk_id, produk_nama: pr.name || dd.produk_id, qty: dd.rekomendasi_restock };
   });
-  return ok({
-    kunjungan_id: visit.kunjungan_id || visit.id, invoice_id: invoiceId,
-    total_terjual: visit.total_sold, total_invoice: invoiceTotal,
-    has_restock_recommendation: restockItems.length > 0, restock_items: restockItems,
-  }, 'Kunjungan berhasil difinalisasi');
+  return ok({ kunjungan_id: visit.kunjungan_id || visit.id, invoice_id: invoiceId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, has_restock_recommendation: restockItems.length > 0, restock_items: restockItems }, 'Kunjungan berhasil difinalisasi');
 };
 
 bridge._actions['cancelKunjungan'] = async (params) => {
@@ -1216,17 +1173,11 @@ bridge._actions['cancelKunjungan'] = async (params) => {
   const { data: visit } = await _supabase.from('visits').select('*').eq('kunjungan_id', params.kunjunganId).single();
   if (!visit) return fail('Kunjungan tidak ditemukan');
   if (session.role === 'SALES' && visit.sales_id !== (session.user?.user_metadata?.sales_id || '')) return fail('Akses ditolak');
-  if (visit.status === 'DRAFT') {
-    await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId);
-    return ok(null, 'Kunjungan draft dibatalkan');
-  }
+  if (visit.status === 'DRAFT') { await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId); return ok(null, 'Kunjungan draft dibatalkan'); }
   if (visit.status === 'COMPLETED') {
     if (visit.total_invoice > 0) {
       var { data: invoices } = await _supabase.from('invoices').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
-      for (var inv of invoices || []) {
-        await _supabase.from('invoices').update({ status_pembayaran: 'VOID' }).eq('id', inv.id);
-        await _supabase.from('receivables').update({ status: 'VOID' }).eq('invoice_id', inv.id);
-      }
+      for (var inv of invoices || []) { await _supabase.from('invoices').update({ status_pembayaran: 'VOID' }).eq('id', inv.id); await _supabase.from('receivables').update({ status: 'VOID' }).eq('invoice_id', inv.id); }
     }
     await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId);
     return ok(null, 'Kunjungan dibatalkan, invoice & piutang dibatalkan');
@@ -1241,46 +1192,24 @@ bridge._actions['restockFromKunjungan'] = async (params) => {
   const { data: details } = await _supabase.from('visit_details').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
   var items = (details || []).filter(function(d) { return d.rekomendasi_restock > 0; }).map(function(d) { return { produk_id: d.produk_id, qty: d.rekomendasi_restock }; });
   if (!items.length) return fail('Tidak ada rekomendasi restock');
-  // Create shipment
-  var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({
-    customer_id: visit.customer_id, sales_id: visit.sales_id,
-    type: 'RESTOCK', status: 'SHIPPED',
-    total_items: items.length,
-    total_qty: items.reduce(function(s, i) { return s + i.qty; }, 0),
-    notes: 'Restock otomatis dari kunjungan ' + (visit.kunjungan_id || visit.id),
-  }).select().single();
+  var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({ customer_id: visit.customer_id, sales_id: visit.sales_id, type: 'RESTOCK', status: 'SHIPPED', total_items: items.length, total_qty: items.reduce(function(s, i) { return s + i.qty; }, 0), notes: 'Restock otomatis dari kunjungan ' + (visit.kunjungan_id || visit.id) }).select().single();
   if (shpErr) return fail(shpErr.message);
   for (var item of items) {
     await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
     var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', visit.customer_id).eq('produk_id', item.produk_id).single();
-    if (cs) {
-      await _supabase.from('consignment_stock').update({
-        qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty,
-        qty_sisa: (cs.qty_sisa || 0) + item.qty,
-      }).eq('id', cs.id);
-    } else {
-      await _supabase.from('consignment_stock').insert({
-        customer_id: visit.customer_id, produk_id: item.produk_id, sales_id: visit.sales_id,
-        qty_titip_awal: item.qty, qty_terjual: 0, qty_sisa: item.qty,
-      });
-    }
+    if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
+    else { await _supabase.from('consignment_stock').insert({ customer_id: visit.customer_id, produk_id: item.produk_id, sales_id: visit.sales_id, qty_titip_awal: item.qty, qty_terjual: 0, qty_sisa: item.qty }); }
   }
   return ok(null, 'Restock berhasil');
 };
 
 bridge._actions['uploadFotoKunjungan'] = async (params) => {
-  var kunjunganId = params.kunjunganId;
-  var tipe = params.tipe || 'sebelum';
-  var dataUrl = params.dataUrl;
+  var kunjunganId = params.kunjunganId, tipe = params.tipe || 'sebelum', dataUrl = params.dataUrl;
   if (!kunjunganId || !dataUrl) return fail('Parameter kurang');
   var { data: visit } = await _supabase.from('visits').select('photos').eq('kunjungan_id', kunjunganId).single();
-  var arr = [];
-  try { arr = JSON.parse(visit?.photos || '[]'); } catch(e) { arr = []; }
-  if (!Array.isArray(arr)) arr = [];
-  var entry = { url: dataUrl };
-  if (params.latitude && params.longitude) { entry.lat = params.latitude; entry.lng = params.longitude; }
-  if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); }
-  else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
+  var arr = []; try { arr = JSON.parse(visit?.photos || '[]'); } catch(e) { arr = []; } if (!Array.isArray(arr)) arr = [];
+  var entry = { url: dataUrl }; if (params.latitude && params.longitude) { entry.lat = params.latitude; entry.lng = params.longitude; }
+  if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); } else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
   await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('kunjungan_id', kunjunganId);
   return ok(null, 'Foto berhasil diupload');
 };
@@ -1462,35 +1391,19 @@ bridge._actions['createProduksi'] = async (params) => {
 
 bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) => {
   const d = params.data || params;
-  // Look up customer to get sales_id
   const { data: cust } = await _supabase.from('customers').select('sales_id').eq('id', d.customer_id).single();
   var salesId = d.sales_id || cust?.sales_id || null;
   const items = d.items || [];
   const { data: shp, error: shpErr } = await _supabase.from('shipments').insert({
-    customer_id: d.customer_id,
-    sales_id: salesId,
-    type: d.tipe || 'RESTOCK',
-    status: 'SHIPPED',
-    total_items: items.length,
-    total_qty: items.reduce((s, i) => s + (i.qty || 0), 0),
-    notes: d.notes || '',
+    customer_id: d.customer_id, sales_id: salesId, type: d.tipe || 'RESTOCK', status: 'SHIPPED',
+    total_items: items.length, total_qty: items.reduce((s, i) => s + (i.qty || 0), 0), notes: d.notes || '',
   }).select().single();
   if (shpErr) return fail(shpErr.message);
-  // Update/create consignment_stock for each item
   for (var item of items) {
     await _supabase.from('shipment_details').insert({ shipment_id: shp.id, produk_id: item.produk_id, qty: item.qty });
     var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('produk_id', item.produk_id).single();
-    if (cs) {
-      await _supabase.from('consignment_stock').update({
-        qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty,
-        qty_sisa: (cs.qty_sisa || 0) + item.qty,
-      }).eq('id', cs.id);
-    } else {
-      await _supabase.from('consignment_stock').insert({
-        customer_id: d.customer_id, produk_id: item.produk_id, sales_id: salesId,
-        qty_titip_awal: item.qty, qty_terjual: 0, qty_retur: 0, qty_sisa: item.qty,
-      });
-    }
+    if (cs) { await _supabase.from('consignment_stock').update({ qty_titip_awal: (cs.qty_titip_awal || 0) + item.qty, qty_sisa: (cs.qty_sisa || 0) + item.qty }).eq('id', cs.id); }
+    else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, produk_id: item.produk_id, sales_id: salesId, qty_titip_awal: item.qty, qty_terjual: 0, qty_retur: 0, qty_sisa: item.qty }); }
   }
   return ok(shp, 'Titipan berhasil');
 };
@@ -1522,6 +1435,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
   var expenses = (monthExpenses.data || []).reduce(function(s, e){ return s + (e.amount || 0); }, 0);
   var komisi = (monthCommissions.data || []).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var stokGudang = (stok.data || []).reduce(function(s, item){ return s + (item.qty_remaining || 0); }, 0);
+  // Simple laba estimate: 30% of omzet
   var labaKotor = Math.round(omzetBulan * 0.3);
   var labaBersih = Math.max(0, labaKotor - expenses - komisi);
 
@@ -1537,7 +1451,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
     var md = new Date(today); md.setMonth(md.getMonth() - m);
     var ms = md.toISOString().substring(0, 7);
     var monthTotal = (chartM.data || []).filter(function(inv){ return (inv.invoice_date || '').substring(0, 7) === ms; }).reduce(function(s, inv){ return s + (inv.total || 0); }, 0);
-    chartBulanan.push({ month: ms, total: monthTotal });
+    chartBulanan.push({ label: ms, total: monthTotal });
   }
 
   return ok({
@@ -2283,11 +2197,18 @@ window.goSetup = function goSetup() {
     if (session) {
       const { data: { user } } = await _supabase.auth.getUser();
       if (user) {
-        const { data: profile } = await _supabase
+        let profile = (await _supabase
           .from('users')
           .select('*')
           .eq('auth_id', user.id)
-          .single();
+          .maybeSingle()).data;
+        if (!profile && user.email) {
+          profile = (await _supabase
+            .from('users')
+            .select('*')
+            .eq('email', user.email)
+            .maybeSingle()).data;
+        }
 
         if (profile) {
           sessionStorage.setItem('seblak_token', session.access_token);
@@ -2331,14 +2252,14 @@ window.goSetup = function goSetup() {
           <label>Username</label>
           <div class="input-wrap">
             <span class="input-icon">👤</span>
-            <input type="text" id="username" placeholder="Masukkan username" autocomplete="off">
+            <input type="text" id="username" placeholder="Masukkan username" autocomplete="username">
           </div>
         </div>
         <div class="login-field">
           <label>Password</label>
           <div class="input-wrap">
             <span class="input-icon">🔒</span>
-            <input type="password" id="password" placeholder="Masukkan password" autocomplete="new-password">
+            <input type="password" id="password" placeholder="Masukkan password" autocomplete="current-password">
             <button class="pw-toggle" type="button" onclick="togglePassword()" tabindex="-1">👁️</button>
           </div>
         </div>
@@ -2673,7 +2594,7 @@ function switchTab(id){
   var mc=document.getElementById('mainContent');
 
   // Profile & Log Viewer: always re-render (data may change)
-  if (id === 'profile' || id === 'log-viewer' || id === 'titipan') delete _pageCache[id];
+  if (id === 'profile' || id === 'log-viewer') delete _pageCache[id];
 
   // Instant render dari cache (zero delay) — ALWAYS check content matches key
   if (_pageCache[id]) {
@@ -2829,10 +2750,10 @@ function setCached(key, data) {
   _cacheTimestamps[key] = Date.now();
 }
 
-function populateSelect(selectId, data, valueKey, labelKey1, labelKey2, selectedValue, placeholder) {
+function populateSelect(selectId, data, valueKey, labelKey1, labelKey2, selectedValue) {
   var sel = document.getElementById(selectId);
   if (!sel) return;
-  var html = '<option value="">'+(placeholder||'Semua Sales')+'</option>';
+  var html = '<option value="">Semua Sales</option>';
   data.forEach(function(s) {
     var val = s[valueKey] || '';
     var label = s[labelKey1] || s[labelKey2] || val;
@@ -2859,13 +2780,13 @@ function loadSalesDropdown(selectId, selectedValue, callback) {
 function loadProdukDropdown(selectId, selectedValue, callback) {
   var cached = getCached('produk', 300);
   if (cached && cached.success) {
-    if (selectId) populateSelect(selectId, cached.data, 'produk_id', 'nama_produk', 'nama', selectedValue, 'Semua Produk');
+    if (selectId) populateSelect(selectId, cached.data, 'produk_id', 'nama_produk', 'nama', selectedValue);
     if (callback) callback();
     return;
   }
   api('getProduk', {}, function(r) {
     if (r.success) setCached('produk', r);
-    if (selectId) populateSelect(selectId, (r.data||[]), 'produk_id', 'nama_produk', 'nama', selectedValue, 'Semua Produk');
+    if (selectId) populateSelect(selectId, (r.data||[]), 'produk_id', 'nama_produk', 'nama', selectedValue);
     if (callback) callback();
   });
 }
@@ -3484,17 +3405,7 @@ function showKunjBuat(){
   document.getElementById('kunjBuatBtn').className='btn btn-primary';
   document.getElementById('kunjRiwayatBtn').className='btn btn-outline';
   var conte=document.getElementById('kunjunganContent');
-  var sc=document.getElementById('kunjStepContainer');
-  if(!sc){
-    var d=document.createElement('div');d.id='kunjStepContainer';
-    d.style.cssText='display:flex;gap:8px;margin-bottom:16px';
-    d.innerHTML='<span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span>';
-    conte.parentNode.insertBefore(d, conte);
-  }else{
-    sc.style.display='flex';
-    sc.innerHTML='<span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span>';
-  }
-  conte.innerHTML='';
+  conte.innerHTML='<div style="display:flex;gap:8px;margin-bottom:16px"><span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span></div><div id="kunjStepContent"></div>';
   kunjunganState={};
   showKunjunganStep1();
 }
@@ -3502,8 +3413,6 @@ function showKunjBuat(){
 function showKunjRiwayat(){
   document.getElementById('kunjBuatBtn').className='btn btn-outline';
   document.getElementById('kunjRiwayatBtn').className='btn btn-primary';
-  var sc=document.getElementById('kunjStepContainer');
-  if(sc)sc.style.display='none';
   var conte=document.getElementById('kunjunganContent');
   conte.innerHTML='<div class="loading">Memuat riwayat...</div>';
   loadSalesDropdown('', '', function() {
@@ -4231,45 +4140,10 @@ function showStokGudang(){
     if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
     var data=r.data||[];
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>';return}
-    var html='<div class="card"><h4>Stok Gudang</h4>';
-    html+='<div style="display:flex;gap:8px;margin-bottom:12px"><button class="btn btn-sm btn-outline" onclick="showStokGudang()">🔄 Refresh</button></div>';
-    html+='<div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
-    data.forEach(function(s){
-      var p=s.products||{};
-      html+='<tr><td>'+(p.name||s.product_id||'')+'</td><td>'+(s.batch_number||'-')+'</td><td>'+(s.qty_in||0)+'</td><td>'+(s.qty_out||0)+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td>';
-      html+='<td><button class="btn btn-sm btn-outline" onclick="editStokGudang(\''+s.id+'\','+(s.qty_in||0)+','+(s.qty_out||0)+')" style="font-size:10px;padding:2px 6px">Edit</button> ';
-      html+='<button class="btn btn-sm btn-danger" onclick="hapusStokGudang(\''+s.id+'\')" style="font-size:10px;padding:2px 6px">Hapus</button></td></tr>';
-    });
+    var html='<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Total Masuk</th><th>Total Keluar</th><th>Sisa</th></tr></thead><tbody>';
+    data.forEach(function(s){html+='<tr><td>'+(s.produk_id||'')+'</td><td>'+(s.total_masuk||0)+'</td><td>'+(s.total_keluar||0)+'</td><td><strong>'+(s.total_sisa||0)+'</strong></td></tr>'});
     html+='</tbody></table></div></div>';
     el.innerHTML=html;
-  });
-}
-function editStokGudang(id,qtyMasuk,qtyKeluar){
-  var html='<div class="card"><h4>Edit Stok Gudang</h4>';
-  html+='<div class="form-group"><label>Qty Masuk</label><input type="number" id="editGdgMasuk" value="'+qtyMasuk+'" min="0"></div>';
-  html+='<div class="form-group"><label>Qty Keluar</label><input type="number" id="editGdgKeluar" value="'+qtyKeluar+'" min="0"></div>';
-  html+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" onclick="simpanEditStokGudang(\''+id+'\')">Simpan</button>';
-  html+='<button class="btn btn-outline" onclick="showStokGudang()">Batal</button></div></div>';
-  document.getElementById('stokContent').innerHTML=html;
-}
-function simpanEditStokGudang(id){
-  var data={
-    qty_masuk:parseFloat(document.getElementById('editGdgMasuk').value)||0,
-    qty_keluar:parseFloat(document.getElementById('editGdgKeluar').value)||0
-  };
-  api('updateStokGudang',{id:id,data:data},function(r){
-    if(!r.success){toast('❌ '+r.message);return}
-    toast('✅ Stok gudang diperbarui');
-    showStokGudang();
-  });
-}
-async function hapusStokGudang(id){
-  var ok=await confirmModal('Yakin ingin menghapus data stok gudang ini?');
-  if(!ok)return;
-  api('deleteStokGudang',{id:id},function(r){
-    if(!r.success){toast('❌ '+r.message);return}
-    toast('✅ Stok gudang dihapus');
-    showStokGudang();
   });
 }
 var _stokSalesFilter = '';
@@ -4285,53 +4159,12 @@ function showStokKonsinyasi(){
       var data=r.data||[];
       var html='<div class="form-group" style="max-width:300px"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
       if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', '');return}
-      html+='<div class="card"><h4>Stok Konsinyasi</h4>';
-      html+='<div style="display:flex;gap:8px;margin-bottom:12px"><button class="btn btn-sm btn-outline" onclick="showStokKonsinyasi()">🔄 Refresh</button></div>';
-      html+='<div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
-      data.forEach(function(s){
-        var c=s.customers||{}; var sa=s.sales||{}; var p=s.products||{};
-        html+='<tr><td>'+(c.store_name||s.customer_id||'')+'</td><td>'+(sa.full_name||s.sales_id||'')+'</td><td>'+(p.name||s.product_id||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td>';
-        html+='<td><button class="btn btn-sm btn-outline" onclick="editStokKonsinyasi(\''+s.id+'\','+(s.qty_titip_awal||0)+','+(s.qty_terjual||0)+','+(s.qty_retur||0)+','+(s.qty_sisa||0)+',\''+((s.target_display||0))+'……'+'\')" style="font-size:10px;padding:2px 6px">Edit</button> ';
-        html+='<button class="btn btn-sm btn-danger" onclick="hapusStokKonsinyasi(\''+s.id+'\')" style="font-size:10px;padding:2px 6px">Hapus</button></td></tr>';
-      });
+      html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
+      data.forEach(function(s){html+='<tr><td>'+(s.customer_name||s.customer_id||'')+'</td><td>'+(s.sales_name||s.sales_id||'')+'</td><td>'+(s.produk_nama||s.produk_id||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>'});
       html+='</tbody></table></div></div>';
       el.innerHTML=html;
       loadSalesDropdown('fStokSales', _stokSalesFilter);
     });
-  });
-}
-function editStokKonsinyasi(id,titip,terjual,retur,sisa,targetDisplay){
-  var html='<div class="card"><h4>Edit Stok Konsinyasi</h4>';
-  html+='<div class="form-group"><label>Qty Titip Awal</label><input type="number" id="editKonTitip" value="'+titip+'" min="0"></div>';
-  html+='<div class="form-group"><label>Qty Terjual</label><input type="number" id="editKonTerjual" value="'+terjual+'" min="0"></div>';
-  html+='<div class="form-group"><label>Qty Retur</label><input type="number" id="editKonRetur" value="'+retur+'" min="0"></div>';
-  html+='<div class="form-group"><label>Qty Sisa</label><input type="number" id="editKonSisa" value="'+sisa+'" min="0"></div>';
-  html+='<div class="form-group"><label>Target Display</label><input type="number" id="editKonTarget" value="'+(targetDisplay||0)+'" min="0"></div>';
-  html+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" onclick="simpanEditStokKonsinyasi(\''+id+'\')">Simpan</button>';
-  html+='<button class="btn btn-outline" onclick="showStokKonsinyasi()">Batal</button></div></div>';
-  document.getElementById('stokContent').innerHTML=html;
-}
-function simpanEditStokKonsinyasi(id){
-  var data={
-    qty_titip:parseFloat(document.getElementById('editKonTitip').value)||0,
-    qty_terjual:parseFloat(document.getElementById('editKonTerjual').value)||0,
-    qty_retur:parseFloat(document.getElementById('editKonRetur').value)||0,
-    qty_sisa:parseFloat(document.getElementById('editKonSisa').value)||0,
-    target_display:parseFloat(document.getElementById('editKonTarget').value)||0
-  };
-  api('updateStokKonsinyasi',{id:id,data:data},function(r){
-    if(!r.success){toast('❌ '+r.message);return}
-    toast('✅ Stok konsinyasi diperbarui');
-    showStokKonsinyasi();
-  });
-}
-async function hapusStokKonsinyasi(id){
-  var ok=await confirmModal('Yakin ingin menghapus data stok konsinyasi ini?');
-  if(!ok)return;
-  api('deleteStokKonsinyasi',{id:id},function(r){
-    if(!r.success){toast('❌ '+r.message);return}
-    toast('✅ Stok konsinyasi dihapus');
-    showStokKonsinyasi();
   });
 }
 
@@ -4347,8 +4180,7 @@ function showProduksi(){
     html+='<div class="form-group"><label>HPP per Unit</label><input type="number" id="fHppProduksi" min="0"></div></div>';
     html+='<div class="form-group"><label>Tanggal Expired (opsional)</label><input type="date" id="fExpProduksi"></div>';
     html+='<div class="form-group"><label>Keterangan</label><input id="fKetProduksi" placeholder="Opsional"></div>';
-    html+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-success" onclick="saveProduksi()">Simpan Produksi</button>';
-    html+='<button class="btn btn-outline" onclick="showRiwayatProduksi()">Batal</button></div>';
+    html+='<button class="btn btn-success" onclick="saveProduksi()">Simpan Produksi</button>';
     html+='<div id="produksiResult" style="margin-top:12px"></div></div>';
     document.getElementById('stokContent').innerHTML=html;
     loadProdukDropdown('fProdukProduksi', '');
@@ -4381,8 +4213,8 @@ function showRiwayatProduksi(){
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Belum ada produksi.</p></div>';return}
     var html='<div class="card"><h4>Riwayat Produksi</h4><div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Produk</th><th>Batch</th><th>Qty</th><th>HPP</th><th>Total</th><th>Tgl</th></tr></thead><tbody>';
     data.forEach(function(p){
-      html+='<tr><td>'+(p.id||'')+'</td><td>'+(p.products?.name||p.produk_id||'')+'</td><td>'+(p.batch_number||p.batch||'')+'</td>';
-      html+='<td>'+(p.qty||0)+'</td><td>Rp '+fmt(p.hpp_per_unit||0)+'</td><td>Rp '+fmt((p.qty||0)*(p.hpp_per_unit||0))+'</td><td>'+(p.production_date||'').substring(0,10)+'</td></tr>';
+      html+='<tr><td>'+(p.produksi_id||'')+'</td><td>'+(p.produk_id||'')+'</td><td>'+(p.batch_number||p.batch||'')+'</td>';
+      html+='<td>'+(p.qty_produksi||0)+'</td><td>Rp '+fmt(p.hpp_per_unit||0)+'</td><td>Rp '+fmt((p.qty_produksi||0)*(p.hpp_per_unit||0))+'</td><td>'+(p.tanggal_produksi||'').substring(0,10)+'</td></tr>';
     });
     html+='</tbody></table></div></div>';
     el.innerHTML=html;
@@ -4395,28 +4227,48 @@ var _allCustomers = [];
 function initTitipan(){
   var mc=document.getElementById('mainContent');
   mc.innerHTML='<div class="loading">Memuat...</div>';
+  _titipCart = [];
   loadSalesDropdown('', '', function() {
     loadProdukDropdown('', '', function() {
       api('getCustomers',{},function(rCust){
         _allCustomers = (rCust.success&&rCust.data)?rCust.data:[];
-        var html='<div class="card"><h4>Titip Barang ke Toko</h4>';
-        html+='<div class="form-group"><label>Filter Sales</label><select id="fTitipSales" onchange="filterTitipCust()"></select></div>';
-        html+='<div class="form-group"><label>Toko</label><select id="fTitipCust">'+buildCustOpts()+'</select></div>';
-        html+='<div class="form-group"><label>Tipe</label><select id="fTitipTipe"><option value="AWAL">Titip Awal</option><option value="RESTOCK">Restock</option></select></div>';
-        html+='<div id="titipItems"><div class="card" style="padding:12px"><div class="form-row">';
-        html+='<div class="form-group"><label>Produk</label><select id="titipProd0"></select></div>';
-        html+='<div class="form-group"><label>Jumlah</label><input type="number" id="titipQty0" min="1" value="20"></div>';
-        html+='</div></div></div>';
-        html+='<button class="btn btn-sm btn-outline" onclick="addTitipRow()" style="margin-bottom:12px">+ Tambah Produk</button>';
-        html+='<button class="btn btn-success" onclick="saveTitip()">Simpan Titipan</button> ';
-        html+='<button class="btn btn-outline" onclick="switchTab('+"'dashboard'"+')">Batal</button>';
-        html+='<div id="titipResult" style="margin-top:12px"></div></div>';
-        mc.innerHTML=html;
-        loadSalesDropdown('fTitipSales', '');
-        loadProdukDropdown('titipProd0', '');
+        renderTitipPage();
       });
     });
   });
+}
+
+var _titipCart = [];
+
+function renderTitipPage() {
+  var mc=document.getElementById('mainContent');
+  var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+  html+='<h3 style="color:var(--primary)">📦 Titipan Keranjang</h3></div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">';
+  // LEFT: form tambah
+  html+='<div class="card"><h4 style="margin-bottom:12px">Tambah ke Keranjang</h4>';
+  html+='<div class="form-group"><label>Filter Sales</label><select id="fTitipSales" onchange="filterTitipCust()"></select></div>';
+  html+='<div class="form-group"><label>Toko</label><select id="fTitipCust">'+buildCustOpts()+'</select></div>';
+  html+='<div class="form-group"><label>Tipe</label><select id="fTitipTipe"><option value="AWAL">Titip Awal</option><option value="RESTOCK">Restock</option></select></div>';
+  html+='<hr style="margin:12px 0">';
+  html+='<div class="form-group"><label>Produk</label><select id="fCartProduk"></select></div>';
+  html+='<div class="form-row"><div class="form-group"><label>Jumlah</label><input type="number" id="fCartQty" min="1" value="20"></div>';
+  html+='<div class="form-group"><label>Harga Satuan</label><input type="number" id="fCartHarga" min="0" value="0" placeholder="Opsional"></div></div>';
+  html+='<button class="btn btn-primary" onclick="tambahKeCart()" style="width:100%">+ Tambah ke Keranjang</button>';
+  html+='</div>';
+  // RIGHT: keranjang
+  html+='<div class="card"><h4 style="margin-bottom:12px">🛒 Keranjang <span id="cartCount" class="badge badge-primary" style="margin-left:8px">0</span></h4>';
+  html+='<div id="cartItems"></div>';
+  html+='<div id="cartSummary" class="cart-total" style="display:none">';
+  html+='<p><strong>Total Item: </strong><span id="cartTotalItem">0</span></p>';
+  html+='<p><strong>Total Qty: </strong><span id="cartTotalQty">0</span></p>';
+  html+='</div>';
+  html+='<button class="btn btn-success" onclick="simpanTitipCart()" id="btnSimpanTitip" disabled style="margin-top:8px;width:100%">Simpan Titipan</button>';
+  html+='<div id="titipResult" style="margin-top:8px"></div>';
+  html+='</div></div>';
+  mc.innerHTML=html;
+  loadSalesDropdown('fTitipSales', '');
+  loadProdukDropdown('fCartProduk', '');
 }
 
 function buildCustOpts(filterSalesId){
@@ -4432,31 +4284,84 @@ function filterTitipCust(){
   var salesId=document.getElementById('fTitipSales').value;
   document.getElementById('fTitipCust').innerHTML=buildCustOpts(salesId);
 }
-var _titipRow=1;
-function addTitipRow(){
-  loadProdukDropdown('', '', function() {
-    var el=document.getElementById('titipItems');
-    el.innerHTML+='<div class="card" style="padding:12px"><div class="form-row"><div class="form-group"><label>Produk</label><select id="titipProd'+_titipRow+'"></select></div><div class="form-group"><label>Jumlah</label><input type="number" id="titipQty'+_titipRow+'" min="1" value="20"></div></div></div>';
-    loadProdukDropdown('titipProd'+_titipRow, '');
-    _titipRow++;
-  });
+
+function tambahKeCart() {
+  var prodEl=document.getElementById('fCartProduk');
+  var qtyEl=document.getElementById('fCartQty');
+  var hargaEl=document.getElementById('fCartHarga');
+  if(!prodEl||!prodEl.value){toast('Pilih produk');return}
+  var qty=parseFloat(qtyEl.value);
+  if(!qty||qty<1){toast('Jumlah minimal 1');return}
+  var harga=parseFloat(hargaEl.value)||0;
+  // cari nama produk dari cache / dropdown
+  var namaProduk=prodEl.options[prodEl.selectedIndex]?.text||prodEl.value;
+  var idx=_titipCart.findIndex(function(i){return i.produk_id===prodEl.value});
+  if(idx>-1){
+    _titipCart[idx].qty+=qty;
+    if(harga)_titipCart[idx].harga_satuan=harga;
+  } else {
+    _titipCart.push({produk_id:prodEl.value,nama_produk:namaProduk,qty:qty,harga_satuan:harga});
+  }
+  qtyEl.value='20';
+  hargaEl.value='0';
+  renderCart();
+  toast('Ditambahkan ke keranjang');
 }
-function saveTitip(){
+
+function hapusDariCart(idx) {
+  _titipCart.splice(idx,1);
+  renderCart();
+}
+
+function renderCart() {
+  var el=document.getElementById('cartItems');
+  var countEl=document.getElementById('cartCount');
+  var totalItemEl=document.getElementById('cartTotalItem');
+  var totalQtyEl=document.getElementById('cartTotalQty');
+  var summaryEl=document.getElementById('cartSummary');
+  var btnEl=document.getElementById('btnSimpanTitip');
+  if(!el)return;
+  if(_titipCart.length===0){
+    el.innerHTML='<p style="color:var(--text-light);text-align:center;padding:20px 0">Keranjang kosong</p>';
+    if(countEl)countEl.textContent='0';
+    if(summaryEl)summaryEl.style.display='none';
+    if(btnEl)btnEl.disabled=true;
+    return;
+  }
+  var totalQty=0;
+  var html='';
+  _titipCart.forEach(function(item,i){
+    totalQty+=item.qty;
+    html+='<div class="cart-item">';
+    html+='<div class="info"><div class="name">'+item.nama_produk+'</div>';
+    html+='<div class="meta">'+item.qty+' pcs'+(item.harga_satuan>0?' × Rp '+fmt(item.harga_satuan):'')+'</div></div>';
+    html+='<button class="btn btn-sm btn-danger" onclick="hapusDariCart('+i+')" style="min-width:32px">✕</button>';
+    html+='</div>';
+  });
+  el.innerHTML=html;
+  if(countEl)countEl.textContent=_titipCart.length;
+  if(totalItemEl)totalItemEl.textContent=_titipCart.length+' item';
+  if(totalQtyEl)totalQtyEl.textContent=totalQty+' pcs';
+  if(summaryEl)summaryEl.style.display='block';
+  if(btnEl)btnEl.disabled=false;
+}
+
+function simpanTitipCart(){
   var customerId=document.getElementById('fTitipCust').value;
   if(!customerId){toast('Pilih toko');return}
-  var items=[];
-  for(var i=0;i<_titipRow;i++){
-    var elProd=document.getElementById('titipProd'+i);
-    var elQty=document.getElementById('titipQty'+i);
-    if(elProd&&elQty&&elProd.value&&elQty.value>0)items.push({produk_id:elProd.value,qty:parseFloat(elQty.value)});
-  }
-  if(items.length===0){toast('Tambah minimal 1 produk');return}
+  if(_titipCart.length===0){toast('Keranjang kosong');return}
+  var items=_titipCart.map(function(i){return{produk_id:i.produk_id,qty:i.qty,harga_satuan:i.harga_satuan||undefined};});
   var el=document.getElementById('titipResult');
   el.innerHTML='<div class="loading">Menyimpan...</div>';
+  var btnEl=document.getElementById('btnSimpanTitip');
+  if(btnEl)btnEl.disabled=true;
   api('createTitip',{data:{customer_id:customerId,tipe:document.getElementById('fTitipTipe').value,items:items}},function(r){
-    if(!r.success){el.innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';return}
+    if(!r.success){el.innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';if(btnEl)btnEl.disabled=false;return}
     el.innerHTML='<p style="color:var(--success);font-weight:600">✅ '+r.message+'</p>';
+    _titipCart=[];
+    renderCart();
     invalidateCache('titipan'); toast('Titipan berhasil');
+    if(btnEl)btnEl.disabled=false;
   });
 }
 
@@ -4749,8 +4654,8 @@ function showStokGudangSales() {
     if (!r.success) { el.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
     var data = r.data || [];
     if (data.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>'; return; }
-    var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s) { var p=s.products||{}; html += '<tr><td>' + (p.name||s.product_id||'') + '</td><td>' + (s.batch_number||'-') + '</td><td>' + (s.qty_in||0) + '</td><td>' + (s.qty_out||0) + '</td><td><strong>' + (s.qty_remaining||0) + '</strong></td></tr>'; });
+    var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Masuk</th><th>Keluar</th><th>Sisa</th></tr></thead><tbody>';
+    data.forEach(function(s) { html += '<tr><td>' + (s.produk_id || '') + '</td><td>' + (s.total_masuk || 0) + '</td><td>' + (s.total_keluar || 0) + '</td><td><strong>' + (s.total_sisa || 0) + '</strong></td></tr>'; });
     html += '</tbody></table></div></div>';
     el.innerHTML = html;
   });
@@ -4762,8 +4667,8 @@ function showStokKonsinyasiSales() {
     if (!r.success) { el.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
     var data = r.data || [];
     if (data.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Tidak ada stok konsinyasi.</p></div>'; return; }
-    var html = '<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Toko</th><th>Sales</th><th>Produk</th><th>Awal</th><th>Terjual</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s) { var c=s.customers||{}; var sa=s.sales||{}; var p=s.products||{}; html += '<tr><td>' + (c.store_name||s.customer_id||'') + '</td><td>' + (sa.full_name||s.sales_id||'') + '</td><td>' + (p.name||s.product_id||'') + '</td><td>' + (s.qty_titip_awal||0) + '</td><td>' + (s.qty_terjual||0) + '</td><td><strong>' + (s.qty_sisa||0) + '</strong></td></tr>'; });
+    var html = '<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Toko</th><th>Produk</th><th>Awal</th><th>Terjual</th><th>Sisa</th></tr></thead><tbody>';
+    data.forEach(function(s) { html += '<tr><td>' + (s.customer_id || '') + '</td><td>' + (s.produk_id || '') + '</td><td>' + (s.qty_titip_awal || 0) + '</td><td>' + (s.qty_terjual || 0) + '</td><td><strong>' + (s.qty_sisa || 0) + '</strong></td></tr>'; });
     html += '</tbody></table></div></div>';
     el.innerHTML = html;
   });
@@ -4794,9 +4699,16 @@ function renderSalesList(data) {
   if (data.length === 0) { html += '<div class="card"><p style="color:var(--text-light)">Belum ada sales.</p></div>'; } else {
     html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama</th><th>Telepon</th><th>Rate</th><th>Target</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
-      html += '<tr><td>' + (s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong></td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + (s.status || '') + '</td>';
+      var isActive = s.is_active !== false && s.status !== 'NONAKTIF';
+      html += '<tr><td>' + (s.code || s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong>' + (!isActive ? ' <small style="color:var(--error)">(nonaktif)</small>' : '') + '</td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + getStatusBadge(isActive ? 'AKTIF' : 'NONAKTIF') + '</td>';
       html += '<td><button class="btn btn-sm btn-outline" onclick="editSales(\'' + s.sales_id + '\')">Edit</button> ';
-      html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')">Nonaktifkan</button></td></tr>';
+      if (isActive) {
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')">Nonaktifkan</button>';
+      } else {
+        html += '<button class="btn btn-sm btn-success" onclick="aktifkanSales(\'' + s.sales_id + '\')">Aktifkan</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusSalesPermanen(\'' + s.sales_id + '\')">Hapus</button>';
+      }
+      html += '</td></tr>';
     });
     html += '</tbody></table></div></div>';
   }
@@ -4859,6 +4771,15 @@ function simpanSalesEdit(id) {
 }
 function hapusSales(id) {
   confirmAndDelete('deleteSales', id, 'sales-list', 'Nonaktifkan sales ini?');
+}
+function aktifkanSales(id) {
+  api('activateSales', {id: id}, function(r) {
+    if (r.success) { toast('✅ Sales berhasil diaktifkan'); invalidateCache('sales-list'); initSalesList(true); }
+    else { toast(r.message || 'Gagal mengaktifkan'); }
+  });
+}
+function hapusSalesPermanen(id) {
+  confirmAndDelete('hardDeleteSales', id, 'sales-list', 'Hapus PERMANEN sales ini?\nData terkait akan dihapus dan tidak bisa dikembalikan!');
 }
 
 // ====== BIAYA OPERASIONAL ======
@@ -5315,7 +5236,6 @@ function showProfile() {
   delete _pageCache['profile'];
   mc.innerHTML = '<h3>👤 Profile</h3>'+
     '<div class="card"><div class="form-group"><label>Nama Lengkap</label><input id="profName" value="'+(user.nama||user.full_name||'')+'"></div>'+
-    '<div class="form-group"><label>No. Telepon</label><input id="profPhone" value="'+(user.phone||'')+'" placeholder="08xxxxxxxxxx"></div>'+
     '<div class="form-group"><label>Username</label><input value="'+(user.username||user.user_id||'')+'" disabled></div>'+
     '<div class="form-group"><label>Role</label><input value="'+(user.role||'')+'" disabled></div>'+
     '<button class="btn btn-primary" onclick="updateProfile()">Simpan Profil</button><div id="profResultProfile" style="margin-top:8px"></div></div>'+
@@ -5327,13 +5247,11 @@ function showProfile() {
 
 function updateProfile() {
   var name = document.getElementById('profName').value.trim();
-  var phone = document.getElementById('profPhone').value.trim();
   if (!name) { document.getElementById('profResultProfile').innerHTML = '<span style="color:var(--error)">Nama wajib diisi</span>'; return; }
   document.getElementById('profResultProfile').innerHTML = '<span style="color:var(--text-light)">Menyimpan...</span>';
-  api('updateProfile', { data: { full_name: name, phone: phone } }, function(r) {
+  api('updateProfile', { data: { full_name: name } }, function(r) {
     if (r.success) {
       CURRENT_USER.full_name = name;
-      CURRENT_USER.phone = phone;
       document.getElementById('topnavUser').textContent = name;
       document.getElementById('topbarUser2').textContent = name;
       document.getElementById('profResultProfile').innerHTML = '<span style="color:var(--success)">✅ Profil berhasil diperbarui</span>';
