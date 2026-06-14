@@ -1086,6 +1086,8 @@ function confirmAndDelete(apiAction, id, page, message) {
         else if (page === 'customer') initCustomer(true);
         else if (page === 'sales-list') initSalesList(true);
         else if (page === 'biaya') initBiaya(true);
+        else if (page === 'stok-gudang') showStokGudangSales();
+        else if (page === 'stok-konsinyasi') showStokKonsinyasiSales();
       } else {
         toast(r.message || 'Gagal menghapus');
       }
@@ -2424,8 +2426,21 @@ function showStokGudang(){
     if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
     var data=r.data||[];
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>';return}
+    // Aggregate by product
+    var agg = {};
+    data.forEach(function(s) {
+      var prod = s.products || {};
+      var pid = s.produk_id || '';
+      if (!agg[pid]) agg[pid] = { nama: prod.name || pid, masuk: 0, keluar: 0, sisa: 0 };
+      agg[pid].masuk += s.qty_in || 0;
+      agg[pid].keluar += s.qty_out || 0;
+      agg[pid].sisa += s.qty_remaining || 0;
+    });
     var html='<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Total Masuk</th><th>Total Keluar</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s){html+='<tr><td>'+(s.produk_id||'')+'</td><td>'+(s.total_masuk||0)+'</td><td>'+(s.total_keluar||0)+'</td><td><strong>'+(s.total_sisa||0)+'</strong></td></tr>'});
+    Object.keys(agg).forEach(function(pid){
+      var a = agg[pid];
+      html+='<tr><td><strong>'+a.nama+'</strong></td><td>'+a.masuk+'</td><td>'+a.keluar+'</td><td><strong>'+a.sisa+'</strong></td></tr>';
+    });
     html+='</tbody></table></div></div>';
     el.innerHTML=html;
   });
@@ -2444,7 +2459,10 @@ function showStokKonsinyasi(){
       var html='<div class="form-group" style="max-width:300px"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
       if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', '');return}
       html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
-      data.forEach(function(s){html+='<tr><td>'+(s.customer_name||s.customer_id||'')+'</td><td>'+(s.sales_name||s.sales_id||'')+'</td><td>'+(s.produk_nama||s.produk_id||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>'});
+      data.forEach(function(s){
+        var cust=s.customers||{}, prod=s.products||{}, sal=s.sales||{};
+        html+='<tr><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(sal.full_name||s.sales_id||'')+'</td><td>'+(prod.name||s.produk_id||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>';
+      });
       html+='</tbody></table></div></div>';
       el.innerHTML=html;
       loadSalesDropdown('fStokSales', _stokSalesFilter);
@@ -2949,8 +2967,19 @@ function showStokGudangSales() {
     if (!r.success) { el.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
     var data = r.data || [];
     if (data.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>'; return; }
-    var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Masuk</th><th>Keluar</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s) { html += '<tr><td>' + (s.produk_id || '') + '</td><td>' + (s.total_masuk || 0) + '</td><td>' + (s.total_keluar || 0) + '</td><td><strong>' + (s.total_sisa || 0) + '</strong></td></tr>'; });
+    var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
+    data.forEach(function(s) {
+      var prod = s.products || {};
+      html += '<tr><td>' + (prod.name || s.produk_id || '') + '</td><td>' + (s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
+      var role = (CURRENT_USER || {}).role;
+      if (role === 'OWNER') {
+        html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokGudang(\'' + s.id + '\')" title="Edit">✏️</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusStokGudang(\'' + s.id + '\')" title="Hapus">🗑️</button></td>';
+      } else {
+        html += '<td></td>';
+      }
+      html += '</tr>';
+    });
     html += '</tbody></table></div></div>';
     el.innerHTML = html;
   });
@@ -2962,11 +2991,84 @@ function showStokKonsinyasiSales() {
     if (!r.success) { el.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
     var data = r.data || [];
     if (data.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Tidak ada stok konsinyasi.</p></div>'; return; }
-    var html = '<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Toko</th><th>Produk</th><th>Awal</th><th>Terjual</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s) { html += '<tr><td>' + (s.customer_id || '') + '</td><td>' + (s.produk_id || '') + '</td><td>' + (s.qty_titip_awal || 0) + '</td><td>' + (s.qty_terjual || 0) + '</td><td><strong>' + (s.qty_sisa || 0) + '</strong></td></tr>'; });
+    var html = '<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Toko</th><th>Produk</th><th>Awal</th><th>Terjual</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
+    data.forEach(function(s) {
+      var cust = s.customers || {};
+      var prod = s.products || {};
+      html += '<tr><td>' + (cust.store_name || s.customer_id || '') + '</td><td>' + (prod.name || s.produk_id || '') + '</td><td>' + (s.qty_titip_awal || 0) + '</td><td>' + (s.qty_terjual || 0) + '</td><td><strong>' + (s.qty_sisa || 0) + '</strong></td>';
+      var role = (CURRENT_USER || {}).role;
+      if (role === 'OWNER') {
+        html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokKonsinyasi(\'' + s.id + '\')" title="Edit">✏️</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusStokKonsinyasi(\'' + s.id + '\')" title="Hapus">🗑️</button></td>';
+      } else {
+        html += '<td></td>';
+      }
+      html += '</tr>';
+    });
     html += '</tbody></table></div></div>';
     el.innerHTML = html;
   });
+}
+
+function showEditStokGudang(id) {
+  api('getStokById', {id: id}, function(r) {
+    if (!r.success) { toast('Gagal: ' + (r.message || '')); return; }
+    var s = r.data || {};
+    var html = '<h3>Edit Stok Gudang</h3>';
+    html += '<div class="form-group"><label>Batch</label><input id="fStokBatch" value="' + (s.batch_number || '') + '"></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Masuk</label><input type="number" id="fStokIn" value="' + (s.qty_in || 0) + '"></div>';
+    html += '<div class="form-group"><label>Keluar</label><input type="number" id="fStokOut" value="' + (s.qty_out || 0) + '"></div></div>';
+    html += '<div class="form-group"><label>Sisa</label><input type="number" id="fStokSisa" value="' + (s.qty_remaining || 0) + '"></div>';
+    html += '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+    html += '<button class="btn btn-primary" onclick="simpanEditStokGudang(\'' + id + '\')">Simpan</button></div>';
+    showModal(html);
+  });
+}
+function simpanEditStokGudang(id) {
+  var data = {
+    batch_number: document.getElementById('fStokBatch').value.trim(),
+    qty_masuk: parseFloat(document.getElementById('fStokIn').value) || 0,
+    qty_keluar: parseFloat(document.getElementById('fStokOut').value) || 0,
+    qty_sisa: parseFloat(document.getElementById('fStokSisa').value) || 0,
+  };
+  api('updateStokGudang', {id: id, data: data}, function(r) {
+    closeModal();
+    if (r.success) { toast('✅ Stok gudang diupdate'); showStokGudangSales(); } else { toast('Error: ' + (r.message || '')); }
+  });
+}
+function hapusStokGudang(id) {
+  confirmAndDelete('deleteStokGudang', id, 'stok-gudang', 'Hapus stok gudang ini?');
+}
+function showEditStokKonsinyasi(id) {
+  api('getStokKonsinyasiById', {id: id}, function(r) {
+    if (!r.success) { toast('Gagal: ' + (r.message || '')); return; }
+    var s = r.data || {};
+    var html = '<h3>Edit Stok Konsinyasi</h3>';
+    html += '<div class="form-row"><div class="form-group"><label>Titip Awal</label><input type="number" id="fKonAwal" value="' + (s.qty_titip_awal || 0) + '"></div>';
+    html += '<div class="form-group"><label>Terjual</label><input type="number" id="fKonTerjual" value="' + (s.qty_terjual || 0) + '"></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Retur</label><input type="number" id="fKonRetur" value="' + (s.qty_retur || 0) + '"></div>';
+    html += '<div class="form-group"><label>Sisa</label><input type="number" id="fKonSisa" value="' + (s.qty_sisa || 0) + '"></div></div>';
+    html += '<div class="form-group"><label>Target Display</label><input type="number" id="fKonTarget" value="' + (s.target_display || 0) + '"></div>';
+    html += '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+    html += '<button class="btn btn-primary" onclick="simpanEditStokKonsinyasi(\'' + id + '\')">Simpan</button></div>';
+    showModal(html);
+  });
+}
+function simpanEditStokKonsinyasi(id) {
+  var data = {
+    qty_titip: parseFloat(document.getElementById('fKonAwal').value) || 0,
+    qty_terjual: parseFloat(document.getElementById('fKonTerjual').value) || 0,
+    qty_retur: parseFloat(document.getElementById('fKonRetur').value) || 0,
+    qty_sisa: parseFloat(document.getElementById('fKonSisa').value) || 0,
+    target_display: parseFloat(document.getElementById('fKonTarget').value) || 0,
+  };
+  api('updateStokKonsinyasi', {id: id, data: data}, function(r) {
+    closeModal();
+    if (r.success) { toast('✅ Stok konsinyasi diupdate'); showStokKonsinyasiSales(); } else { toast('Error: ' + (r.message || '')); }
+  });
+}
+function hapusStokKonsinyasi(id) {
+  confirmAndDelete('deleteStokKonsinyasi', id, 'stok-konsinyasi', 'Hapus stok konsinyasi ini?');
 }
 
 // ====== SALES MANAGEMENT ======

@@ -397,25 +397,12 @@ bridge._actions['createKategori'] = async (params) => {
 // ═══════════════════════════════════════════════════════════════════
 
 bridge._actions['getSales'] = bridge._actions['getSalesList'] = async () => {
-  // Ambil semua sales (termasuk NONAKTIF) + orphaned users (sales_id null)
-  const [{ data: salesData }, { data: orphanUsers }] = await Promise.all([
-    _supabase.from('sales').select('*, users(*)').order('id', { ascending: false }),
-    _supabase.from('users').select('*').eq('role', 'SALES').is('sales_id', null),
-  ]);
-  var mapped = (salesData || []).map(function(s) {
-    var u = s.users || {};
-    return Object.assign(mapFields(s, salesMap), {
-      is_active: u.is_active !== false,
-      users: u,
-    });
-  });
-  (orphanUsers || []).forEach(function(u) {
-    mapped.push({
-      sales_id: null, code: '', full_name: u.full_name || '',
-      phone: u.phone || '', address: '', kota: '',
-      komisi_rate: 0, target_bulanan: 0, status: 'NONAKTIF',
-      users: u, is_active: false,
-    });
+  const { data, error } = await _supabase.from('sales').select('*').order('id', { ascending: false });
+  if (error) return fail(error.message);
+  const mapped = (data || []).map(function(s) {
+    var m = mapFields(s, salesMap);
+    m.is_active = s.status !== 'NONAKTIF';
+    return m;
   });
   return ok(mapped);
 };
@@ -725,6 +712,19 @@ bridge._actions['deleteStokGudang'] = async (params) => {
   const { error } = await _supabase.from('warehouse_stock').delete().eq('id', params.id);
   if (error) return fail(error.message);
   return ok(null, 'Stok berhasil dihapus');
+};
+bridge._actions['getStokById'] = async (params) => {
+  const { data } = await _supabase.from('warehouse_stock').select('*, products(*)').eq('id', params.id).maybeSingle();
+  return ok(data);
+};
+bridge._actions['deleteStokKonsinyasi'] = async (params) => {
+  const { error } = await _supabase.from('consignment_stock').delete().eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Stok konsinyasi berhasil dihapus');
+};
+bridge._actions['getStokKonsinyasiById'] = async (params) => {
+  const { data } = await _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)').eq('id', params.id).maybeSingle();
+  return ok(data);
 };
 
 bridge._actions['getStokKonsinyasi'] = async () => {
@@ -1261,7 +1261,7 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(s) {
         const p = s.products || {};
         return {
-          produk_nama: p.name || s.product_id,
+          produk_nama: p.name || s.produk_id,
           batch: s.batch_number || '',
           qty_masuk: s.qty_in || 0,
           qty_keluar: s.qty_out || 0,
@@ -1278,7 +1278,7 @@ bridge._actions['generateReport'] = async (params) => {
         const p = s.products || {};
         return {
           customer_nama: c.store_name || c.name || s.customer_id,
-          produk_nama: p.name || s.product_id,
+          produk_nama: p.name || s.produk_id || s.product_id,
           qty_titip_awal: s.qty_titip_awal || 0,
           qty_terjual: s.qty_terjual || 0,
           qty_retur: s.qty_retur || 0,
