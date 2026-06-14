@@ -218,9 +218,10 @@ async function _handleCheckSystemReady() {
 }
 
 async function _handleSetupOwner(params) {
+  var email = params.email && params.email.trim() ? params.email.trim() : (params.username + '@seblak.sales');
   // Register with Supabase Auth
   const { data: authData, error: authErr } = await _supabase.auth.signUp({
-    email: params.email,
+    email: email,
     password: params.password,
   });
   if (authErr) return fail(authErr.message);
@@ -229,7 +230,7 @@ async function _handleSetupOwner(params) {
   const { error: insertErr } = await _supabase.from('users').insert({
     auth_id: authData.user.id,
     username: params.username,
-    email: params.email,
+    email: email,
     role: 'OWNER',
     full_name: params.full_name || params.fullName,
     phone: params.phone || null,
