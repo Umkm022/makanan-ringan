@@ -736,10 +736,12 @@ async function _handleCheckSystemReady() {
 
 async function _handleSetupOwner(params) {
   var email = params.email && params.email.trim() ? params.email.trim() : (params.username + '@seblak.id');
-  // Register with Supabase Auth
-  const { data: authData, error: authErr } = await _supabase.auth.signUp({
+  // Use admin API to bypass password policy & email confirmation
+  if (!_supabaseAdmin) return fail('Service role not configured');
+  const { data: authData, error: authErr } = await _supabaseAdmin.auth.admin.createUser({
     email: email,
     password: params.password,
+    email_confirm: true,
   });
   if (authErr) return fail(authErr.message);
 
