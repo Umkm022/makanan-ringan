@@ -448,6 +448,7 @@ bridge._actions['updateSales'] = async (params) => {
 };
 
 bridge._actions['deleteSales'] = async (params) => {
+  await _supabase.from('users').update({ sales_id: null, is_active: false }).eq('sales_id', params.id);
   const { error } = await _supabase.from('sales').delete().eq('id', params.id);
   if (error) return fail(error.message);
   return ok(null, 'Sales berhasil dihapus');
