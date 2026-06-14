@@ -3185,7 +3185,7 @@ function renderProduk(items){
   if(items.length){
     items.forEach(function(p){
       var safe=JSON.stringify(p).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
-      html+='<tr><td>'+(p.kode_produk||p.kode||'')+'</td><td><strong>'+(p.nama_produk||p.nama||'')+'</strong></td><td>'+(p.varian||'')+'</td><td>Rp '+fmt(p.harga_jual||0)+'</td><td>Rp '+fmt(p.hpp||p.harga_modal||0)+'</td>'+(isSales?'':'<td><button class="btn btn-sm btn-outline" onclick="showProdukForm('+safe+')">Edit</button> <button class="btn btn-sm btn-danger" onclick="hapusProduk(\''+(p.produk_id||p.id)+'\')">Hapus</button></td>')+'</tr>';
+      html+='<tr><td>'+(p.kode_produk||p.kode||'')+'</td><td><strong>'+(p.nama_produk||p.nama||'')+'</strong></td><td>'+(p.varian||'')+'</td><td>Rp '+fmt(p.harga_jual||0)+'</td><td>Rp '+fmt(p.hpp||p.harga_modal||0)+'</td>'+(isSales?'':'<td><button class="btn btn-sm btn-outline" onclick="showProdukForm('+safe+')" title="Edit">✏️</button> <button class="btn btn-sm btn-danger" onclick="hapusProduk(\''+(p.produk_id||p.id)+'\')" title="Hapus">🗑️</button></td>')+'</tr>';
     });
   }else{
     html+='<tr><td colspan="'+(isSales?5:6)+'" style="text-align:center;color:var(--text-light)">Belum ada produk.</td></tr>';
@@ -3287,8 +3287,8 @@ function renderCustomer(items){
       var id=c.customer_id||c.id||'';
       var safeC=JSON.stringify(c).replace(/"/g,"'");
       html+='<tr><td><strong>'+(c.store_name||c.nama||'')+'</strong></td><td>'+(c.address||c.alamat||'-')+'</td><td>'+(c.phone||c.telepon||'-')+'</td><td>'+(c.sales_name||'-')+'</td>';
-      html+='<td><button class="btn btn-sm btn-outline" onclick="showCustomerForm('+safeC+')">Edit</button> ';
-      html+='<button class="btn btn-sm btn-danger" onclick="hapusCustomer(\''+id+'\')">Hapus</button></td></tr>';
+      html+='<td><button class="btn btn-sm btn-outline" onclick="showCustomerForm('+safeC+')" title="Edit">✏️</button> ';
+      html+='<button class="btn btn-sm btn-danger" onclick="hapusCustomer(\''+id+'\')" title="Hapus">🗑️</button></td></tr>';
     });
   }else{
     html+='<tr><td colspan="5" style="text-align:center;color:var(--text-light)">Belum ada customer</td></tr>';
@@ -4015,7 +4015,7 @@ function loadSettings(){
     var html='<div class="table-wrap"><table><thead><tr><th>Kunci</th><th>Nilai</th><th>Aksi</th></tr></thead><tbody>';
     Object.keys(data).forEach(function(k){
       html+='<tr><td><strong>'+k+'</strong></td><td><span id="sv_'+k+'">'+(data[k]||'')+'</span></td>';
-      html+='<td><button class="btn btn-sm btn-outline" onclick="editSetting(\''+k+'\',\''+(data[k]||'')+'\')">Edit</button></td></tr>';
+      html+='<td><button class="btn btn-sm btn-outline" onclick="editSetting(\''+k+'\',\''+(data[k]||'')+'\')" title="Edit">✏️</button></td></tr>';
     });
     html+='</tbody></table></div>';
     el.innerHTML=html;
@@ -4467,7 +4467,7 @@ function renderPiutangTable(el, data) {
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td>';
     if (p.sisa_piutang > 0) {
-      html += '<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\'' + (p.piutang_id || '') + '\',\'' + (p.invoice_id || '') + '\',' + (p.sisa_piutang || 0) + ')">Bayar</button></td>';
+      html += '<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\'' + (p.piutang_id || '') + '\',\'' + (p.invoice_id || '') + '\',' + (p.sisa_piutang || 0) + ')" title="Bayar">💰</button></td>';
     } else {
       html += '<td></td>';
     }
@@ -4551,8 +4551,8 @@ function initVisit() {
         var tgl = k.tanggal_kunjungan ? k.tanggal_kunjungan.substring(0, 10) : '';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #E0E0E0">';
         html += '<span>' + tgl + ' — <strong>' + (k.customer_id || '') + '</strong></span>';
-        html += '<div><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')">Lanjutkan</button> ';
-        html += '<button class="btn btn-sm btn-danger" onclick="cancelDraft(\'' + k.kunjungan_id + '\')">✕ Batal</button></div>';
+        html += '<div><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')" title="Lanjutkan">▶️</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="cancelDraft(\'' + k.kunjungan_id + '\')" title="Batal">✕</button></div>';
         html += '</div>';
       });
       html += '</div></div>';
@@ -4626,7 +4626,7 @@ function initRiwayatSales() {
       if(k.foto_toko&&k.foto_toko!=='[]'&&k.foto_toko!=='""')fotoBtn='<span style="cursor:pointer;font-size:14px" onclick="lihatFoto(\''+k.kunjungan_id+'\')">📷</span>';
       html += '<tr><td>' + waktu + '</td><td>' + (k.customer_id || '') + '</td><td>' + d + '</td><td>' + st + '</td><td>Rp ' + fmt(k.total_invoice || 0) + '</td><td>' + lokasi + ' ' + fotoBtn + '</td>';
       if (st === 'DRAFT') {
-        html += '<td><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')">Lanjutkan</button> <button class="btn btn-sm btn-danger" onclick="cancelDraft(\'' + k.kunjungan_id + '\')">✕</button></td>';
+        html += '<td><button class="btn btn-sm btn-secondary" onclick="resumeDraft(\'' + k.kunjungan_id + '\')" title="Lanjutkan">▶️</button> <button class="btn btn-sm btn-danger" onclick="cancelDraft(\'' + k.kunjungan_id + '\')" title="Batal">✕</button></td>';
       } else {
         html += '<td></td>';
       }
@@ -4811,7 +4811,7 @@ function renderBiaya(data) {
     data.forEach(function(b) {
       var tgl = b.tanggal ? b.tanggal.substring(0, 10) : '';
       html += '<tr><td>' + tgl + '</td><td>' + (b.kategori || '') + '</td><td>' + (b.deskripsi || '') + '</td><td>Rp ' + fmt(b.jumlah || 0) + '</td><td>' + (b.metode_pembayaran || '') + '</td>';
-      html += '<td><button class="btn btn-sm btn-danger" onclick="hapusBiaya(\'' + (b.biaya_id || '') + '\')">Hapus</button></td></tr>';
+      html += '<td><button class="btn btn-sm btn-danger" onclick="hapusBiaya(\'' + (b.biaya_id || '') + '\')" title="Hapus">🗑️</button></td></tr>';
     });
     html += '</tbody></table></div></div>';
   }
