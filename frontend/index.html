@@ -2422,29 +2422,7 @@ function showSetup(){showPage('setup')}
 function getToken(){return sessionStorage.getItem('seblak_token')}
 function getUser(){try{return JSON.parse(sessionStorage.getItem('seblak_user')||'{}')}catch(e){return{}}}
 
-// ====== AUTH ======
-function doLogin(){
-  var u=document.getElementById('username').value.trim();
-  var p=document.getElementById('password').value.trim();
-  var btn=document.getElementById('btnLogin');
-  var err=document.getElementById('errorMsg');
-  if(!u||!p){err.textContent='Silakan isi username dan password';err.style.display='block';return}
-  btn.disabled=true;err.style.display='none';
-  var loadingEl=document.getElementById('loadingSpinner');
-  google.script.run.withSuccessHandler(function(r){
-    btn.disabled=false;
-    if(r&&r.success){
-      sessionStorage.setItem('seblak_token',r.data.token);
-      sessionStorage.setItem('seblak_user',JSON.stringify(r.data.user));
-      enterApp(r.data.user);
-    }else{err.textContent=(r&&r.message)||'Login gagal (null response)';err.style.display='block'}
-  }).withFailureHandler(function(e){btn.disabled=false;err.textContent='Error: '+e.message;err.style.display='block'}).authenticate(u,p)
-}
-
-function doLogout(){
-  google.script.run.withSuccessHandler(function(){sessionStorage.clear();showPage('login')}).withFailureHandler(function(){sessionStorage.clear();showPage('login')}).destroySession(getToken())
-}
-
+// doLogin/doLogout now handled by auth.js
 function toggleDark(){
   var on=document.body.classList.toggle('dark');
   localStorage.setItem('darkMode',on);
