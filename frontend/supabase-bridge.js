@@ -544,7 +544,7 @@ bridge._actions['startKunjungan'] = async (params) => {
   if (profile.role === 'SALES' && customer.sales_id !== profile.sales_id) return fail('Akses ditolak: bukan customer Anda');
   const { data: visit, error } = await _supabase.from('visits').insert({
     customer_id: customer.id, sales_id: customer.sales_id,
-    visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toISOString(),
+    visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toTimeString().substring(0, 8),
     status: 'DRAFT', latitude: params.latitude || '', longitude: params.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
@@ -607,9 +607,9 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
     }
     if (d.retur > 0) {
       await _supabase.from('returns').insert({ kunjungan_id: visit.kunjungan_id || visit.id, customer_id: customerId, sales_id: salesId, produk_id: d.produk_id, qty_retur: d.retur, alasan: 'TIDAK_LAKU', tujuan: 'MASUK_GUDANG' });
-      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('produk_id', d.produk_id).single();
+      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.produk_id).single();
       if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (d.retur || 0), qty_remaining: (gudang.qty_remaining || 0) + (d.retur || 0) }).eq('id', gudang.id); }
-      else { await _supabase.from('warehouse_stock').insert({ produk_id: d.produk_id, qty_in: d.retur, qty_out: 0, qty_remaining: d.retur, unit: 'PCS' }); }
+      else { await _supabase.from('warehouse_stock').insert({ product_id: d.produk_id, qty_in: d.retur, qty_out: 0, qty_remaining: d.retur, unit: 'PCS' }); }
     }
   }
   var invoiceId = null;
@@ -631,7 +631,7 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
       await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total_piutang: invoiceTotal, sisa_piutang: invoiceTotal, status: 'OPEN', tanggal_invoice: new Date().toISOString(), tanggal_jatuh_tempo: jatuhTempo.toISOString() });
     }
   }
-  await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toISOString() }).eq('kunjungan_id', visit.kunjungan_id || visit.id);
+  await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('kunjungan_id', visit.kunjungan_id || visit.id);
   var { data: allProduk } = await _supabase.from('products').select('*');
   var restockItems = (details || []).filter(function(dd) { return dd.rekomendasi_restock > 0; }).map(function(dd) {
     var pr = (allProduk || []).filter(function(p) { return p.id === dd.produk_id; })[0] || {};
@@ -645,13 +645,13 @@ bridge._actions['cancelKunjungan'] = async (params) => {
   const { data: visit } = await _supabase.from('visits').select('*').eq('kunjungan_id', params.kunjunganId).single();
   if (!visit) return fail('Kunjungan tidak ditemukan');
   if (session.role === 'SALES' && visit.sales_id !== (session.user?.user_metadata?.sales_id || '')) return fail('Akses ditolak');
-  if (visit.status === 'DRAFT') { await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId); return ok(null, 'Kunjungan draft dibatalkan'); }
+  if (visit.status === 'DRAFT') { await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toTimeString().substring(0, 8) }).eq('kunjungan_id', params.kunjunganId); return ok(null, 'Kunjungan draft dibatalkan'); }
   if (visit.status === 'COMPLETED') {
     if (visit.total_invoice > 0) {
       var { data: invoices } = await _supabase.from('invoices').select('*').eq('kunjungan_id', visit.kunjungan_id || visit.id);
       for (var inv of invoices || []) { await _supabase.from('invoices').update({ status_pembayaran: 'VOID' }).eq('id', inv.id); await _supabase.from('receivables').update({ status: 'VOID' }).eq('invoice_id', inv.id); }
     }
-    await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toISOString() }).eq('kunjungan_id', params.kunjunganId);
+    await _supabase.from('visits').update({ status: 'CANCELLED', end_time: new Date().toTimeString().substring(0, 8) }).eq('kunjungan_id', params.kunjunganId);
     return ok(null, 'Kunjungan dibatalkan, invoice & piutang dibatalkan');
   }
   return fail('Kunjungan sudah ' + visit.status + ', tidak bisa dibatalkan');
@@ -1261,7 +1261,7 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(s) {
         const p = s.products || {};
         return {
-          produk_nama: p.name || s.produk_id,
+          produk_nama: p.name || s.product_id,
           batch: s.batch_number || '',
           qty_masuk: s.qty_in || 0,
           qty_keluar: s.qty_out || 0,
