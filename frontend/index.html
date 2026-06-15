@@ -1419,6 +1419,22 @@ bridge._actions['createProduksi'] = async (params) => {
     created_by: profile.id,
   }).select().single();
   if (error) return fail(error.message);
+  // Update warehouse stock
+  var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.produk_id).maybeSingle();
+  if (gudang) {
+    await _supabase.from('warehouse_stock').update({
+      qty_in: (gudang.qty_in || 0) + qty,
+      qty_remaining: (gudang.qty_remaining || 0) + qty,
+    }).eq('id', gudang.id);
+  } else {
+    await _supabase.from('warehouse_stock').insert({
+      product_id: d.produk_id,
+      qty_in: qty,
+      qty_out: 0,
+      qty_remaining: qty,
+      unit: 'PCS',
+    });
+  }
   return ok(data, 'Produksi berhasil dicatat');
 };
 
