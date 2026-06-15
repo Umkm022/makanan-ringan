@@ -11,7 +11,7 @@ const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5dW9jZmF2eXhsb3Rtb3NsaWh2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTMwMDI0MCwiZXhwIjoyMDk2ODc2MjQwfQ.Ibnw0g1_7A7t65qtwofI0SihAxkTxnIqgYtherKna8M';
 let _supabaseAdmin = null;
 try {
-  _supabaseAdmin = supabase.createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  _supabaseAdmin = supabase.createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, storageKey: 'sb-admin-token' } });
 } catch(e) { _supabaseAdmin = null; }
 
 // ── Auth helpers ───────────────────────────────────────────────────
@@ -222,9 +222,16 @@ async function _handleAuthLogin(username, password) {
   };
 }
 
+let _loggingOut = false;
 async function _handleLogout() {
-  await _supabase.auth.signOut();
-  return ok(null, 'Logout berhasil');
+  if (_loggingOut) return ok(null, 'Logout sedang diproses');
+  _loggingOut = true;
+  try {
+    await _supabase.auth.signOut();
+    return ok(null, 'Logout berhasil');
+  } finally {
+    _loggingOut = false;
+  }
 }
 
 async function _handleCheckSystemReady() {
@@ -880,12 +887,12 @@ bridge._actions['getKpiSummary'] = async (params) => {
   }
 
   if (type === 'toko-aktif') {
-    var q = _supabase.from('customers').select('store_name, kota, status, visit_count, total_omzet');
+    var q = _supabase.from('customers').select('store_name, city, status, visit_count, total_omzet');
     if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
     var { data } = await q;
     var rows = [], total = 0;
     (data || []).forEach(function(c){
-      rows.push([c.store_name || '-', c.kota || '-', c.visit_count || 0, 'Rp ' + _f(c.total_omzet || 0)]);
+      rows.push([c.store_name || '-', c.city || '-', c.visit_count || 0, 'Rp ' + _f(c.total_omzet || 0)]);
       total++;
     });
     return ok({ headers: ['Nama Toko', 'Kota', 'Kunjungan', 'Total Omzet'], rows: rows, total: total });
@@ -964,17 +971,27 @@ bridge._actions['getInvoices'] = async (params) => {
   let query = _supabase.from('invoices').select('*, customers(*), sales(*)');
   if (d?.customer_id) query = query.eq('customer_id', d.customer_id);
   if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (!d?.sales_id) {
+    var profile = await getCurrentProfile();
+    if (profile.role === 'SALES') query = query.eq('sales_id', profile.sales_id);
+  }
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
 };
 
 bridge._actions['getPiutang'] = async () => {
-  const { data } = await _supabase.from('receivables').select('*, customers(*), sales(*), invoices(*)');
+  let query = _supabase.from('receivables').select('*, customers(*), sales(*), invoices(*)');
+  var profile = await getCurrentProfile();
+  if (profile.role === 'SALES') query = query.eq('sales_id', profile.sales_id);
+  const { data } = await query;
   return ok(data);
 };
 
 bridge._actions['getAgingPiutang'] = async () => {
-  const { data } = await _supabase.from('receivables').select('*, customers(*), sales(*)');
+  let query = _supabase.from('receivables').select('*, customers(*), sales(*)');
+  var profile = await getCurrentProfile();
+  if (profile.role === 'SALES') query = query.eq('sales_id', profile.sales_id);
+  const { data } = await query;
   var result = { '0-30': 0, '31-60': 0, '61-90': 0, '>90': 0, total: 0 };
   (data || []).filter(function(p){ return p.status !== 'PAID'; }).forEach(function(p){
     var days = p.due_date ? Math.floor((new Date() - new Date(p.due_date)) / (1000 * 60 * 60 * 24)) : 0;

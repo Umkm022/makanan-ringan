@@ -47,7 +47,10 @@ window.doLogin = async function doLogin() {
 };
 
 // ── Override logout ───────────────────────────────────────────────
+let _doLoggingOut = false;
 window.doLogout = async function doLogout() {
+  if (_doLoggingOut) return;
+  _doLoggingOut = true;
   try {
     await bridge.direct('destroySession');
   } catch {}
@@ -61,6 +64,7 @@ window.doLogout = async function doLogout() {
   } else {
     window.location.href = '?page=login';
   }
+  setTimeout(function() { _doLoggingOut = false; }, 2000);
 };
 
 // ── Override setup ────────────────────────────────────────────────
