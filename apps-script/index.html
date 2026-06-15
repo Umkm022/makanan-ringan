@@ -1513,6 +1513,13 @@ function showProdukForm(p){
   showModal(html);
 }
 
+function generateKodeProduk(){
+  var chars='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  var r='';
+  for(var i=0;i<4;i++)r+=chars.charAt(Math.floor(Math.random()*chars.length));
+  return 'PRD-'+r;
+}
+
 function simpanProduk(id){
   var data={
     nama_produk:document.getElementById('fPNama').value.trim(),
@@ -1523,6 +1530,7 @@ function simpanProduk(id){
     varian:document.getElementById('fPVarian').value.trim(),
     deskripsi:document.getElementById('fPDeskripsi').value.trim()
   };
+  if(!data.kode_produk)data.kode_produk=generateKodeProduk();
   if(!data.nama_produk){toast('Nama produk harus diisi');return}
   var action=id?'updateProduk':'createProduk';
   var params={data:data};
@@ -2193,6 +2201,7 @@ function renderWizardKategoriSelect(){
 function wizardAddProduk(){
   var data = {
     nama_produk: document.getElementById('wizPNama').value.trim(),
+    kode_produk: generateKodeProduk(),
     kategori_id: document.getElementById('wizPKat').value,
     harga_jual: parseFloat(document.getElementById('wizPHarga').value) || 7000,
     hpp: parseFloat(document.getElementById('wizPHpp').value) || 2500,
