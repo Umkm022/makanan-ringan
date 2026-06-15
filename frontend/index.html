@@ -4219,20 +4219,13 @@ function showStokGudang(){
     if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
     var data=r.data||[];
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>';return}
-    // Aggregate by product
-    var agg = {};
+    var html='<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
       var prod = s.products || {};
-      var pid = s.produk_id || '';
-      if (!agg[pid]) agg[pid] = { nama: prod.name || pid, masuk: 0, keluar: 0, sisa: 0 };
-      agg[pid].masuk += s.qty_in || 0;
-      agg[pid].keluar += s.qty_out || 0;
-      agg[pid].sisa += s.qty_remaining || 0;
-    });
-    var html='<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Total Masuk</th><th>Total Keluar</th><th>Sisa</th></tr></thead><tbody>';
-    Object.keys(agg).forEach(function(pid){
-      var a = agg[pid];
-      html+='<tr><td><strong>'+a.nama+'</strong></td><td>'+a.masuk+'</td><td>'+a.keluar+'</td><td><strong>'+a.sisa+'</strong></td></tr>';
+      html += '<tr><td>' + (prod.name || s.produk_id || '') + '</td><td>' + (s.batch || s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
+      html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokGudang(\'' + s.id + '\')" title="Edit">✏️</button> ';
+      html += '<button class="btn btn-sm btn-danger" onclick="hapusStokGudang(\'' + s.id + '\')" title="Hapus">🗑️</button></td>';
+      html += '</tr>';
     });
     html+='</tbody></table></div></div>';
     el.innerHTML=html;
