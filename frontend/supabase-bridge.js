@@ -488,6 +488,36 @@ bridge._actions['createSales'] = async (params) => {
   return ok(salesData, msg);
 };
 
+bridge._actions['createSalesAuth'] = async (params) => {
+  const d = params.data || params;
+  if (!d.sales_id || !d.username || !d.password) return fail('sales_id, username, password wajib');
+  var { data: salesData, error: salesErr } = await _supabase.from('sales').select('*, users!inner(*)').eq('id', d.sales_id).maybeSingle();
+  if (salesErr) return fail(salesErr.message);
+  if (!salesData) return fail('Sales tidak ditemukan');
+  if (salesData.users) return fail('Sales sudah memiliki akun login');
+  var { data: dup } = await _supabase.from('users').select('id').eq('username', d.username).maybeSingle();
+  if (dup) return fail('Username sudah digunakan');
+  if (!_supabaseAdmin) return fail('Service role not configured');
+  var email = d.email || d.username + '@seblak.id';
+  const { data: authData, error: authErr } = await _supabaseAdmin.auth.admin.createUser({
+    email: email,
+    password: d.password,
+    email_confirm: true,
+  });
+  if (authErr) return fail(authErr.message);
+  var { error: userErr } = await _supabase.from('users').insert({
+    auth_id: authData.user.id,
+    username: d.username,
+    email: email,
+    role: 'SALES',
+    full_name: salesData.full_name || d.full_name,
+    sales_id: d.sales_id,
+    is_active: true,
+  });
+  if (userErr) return fail(userErr.message);
+  return ok(null, 'Akun login berhasil dibuat');
+};
+
 bridge._actions['updateSales'] = async (params) => {
   const d = params.data || params;
   const { data, error } = await _supabase.from('sales').update({

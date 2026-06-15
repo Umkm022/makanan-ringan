@@ -1006,6 +1006,36 @@ bridge._actions['createSales'] = async (params) => {
   return ok(salesData, msg);
 };
 
+bridge._actions['createSalesAuth'] = async (params) => {
+  const d = params.data || params;
+  if (!d.sales_id || !d.username || !d.password) return fail('sales_id, username, password wajib');
+  var { data: salesData, error: salesErr } = await _supabase.from('sales').select('*, users!inner(*)').eq('id', d.sales_id).maybeSingle();
+  if (salesErr) return fail(salesErr.message);
+  if (!salesData) return fail('Sales tidak ditemukan');
+  if (salesData.users) return fail('Sales sudah memiliki akun login');
+  var { data: dup } = await _supabase.from('users').select('id').eq('username', d.username).maybeSingle();
+  if (dup) return fail('Username sudah digunakan');
+  if (!_supabaseAdmin) return fail('Service role not configured');
+  var email = d.email || d.username + '@seblak.id';
+  const { data: authData, error: authErr } = await _supabaseAdmin.auth.admin.createUser({
+    email: email,
+    password: d.password,
+    email_confirm: true,
+  });
+  if (authErr) return fail(authErr.message);
+  var { error: userErr } = await _supabase.from('users').insert({
+    auth_id: authData.user.id,
+    username: d.username,
+    email: email,
+    role: 'SALES',
+    full_name: salesData.full_name || d.full_name,
+    sales_id: d.sales_id,
+    is_active: true,
+  });
+  if (userErr) return fail(userErr.message);
+  return ok(null, 'Akun login berhasil dibuat');
+};
+
 bridge._actions['updateSales'] = async (params) => {
   const d = params.data || params;
   const { data, error } = await _supabase.from('sales').update({
@@ -4960,6 +4990,7 @@ function renderSalesList(data) {
       var isActive = s.is_active !== false && s.status !== 'NONAKTIF';
       html += '<tr><td>' + (s.code || s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong>' + (!isActive ? ' <small style="color:var(--error)">(nonaktif)</small>' : '') + '</td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + getStatusBadge(isActive ? 'AKTIF' : 'NONAKTIF') + '</td>';
       html += '<td><button class="btn btn-sm btn-outline" onclick="editSales(\'' + s.sales_id + '\')" title="Edit">✏️</button> ';
+      html += '<button class="btn btn-sm btn-outline" onclick="showSalesAuthForm(\'' + s.sales_id + '\')" title="Buat Akun Login">🔑</button> ';
       if (isActive) {
         html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')" title="Nonaktifkan">⛔</button>';
       } else {
@@ -5010,6 +5041,25 @@ function editSales(id) {
   api('getSalesById', { id: id }, function(r) {
     if (!r.success) { toast('Gagal: ' + (r.message || '')); return; }
     showSalesForm(r.data || {});
+  });
+}
+function showSalesAuthForm(salesId) {
+  var html = '<h3>🔑 Buat Akun Login Sales</h3>';
+  html += '<p style="color:var(--text-light);margin-bottom:12px">Buat username dan password agar sales bisa login ke aplikasi.</p>';
+  html += '<div class="form-group"><label>Username</label><input id="fAuthUsername"></div>';
+  html += '<div class="form-group"><label>Password</label><input type="password" id="fAuthPassword"></div>';
+  html += '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+  html += '<button class="btn btn-primary" onclick="simpanSalesAuth(\'' + salesId + '\')">Buat Akun</button></div>';
+  showModal(html);
+}
+function simpanSalesAuth(id) {
+  var username = document.getElementById('fAuthUsername').value.trim();
+  var password = document.getElementById('fAuthPassword').value;
+  if (!username || !password) { toast('Username dan password wajib diisi'); return; }
+  api('createSalesAuth', { data: { sales_id: id, username: username, password: password } }, function(r) {
+    closeModal();
+    if (r.success) { toast('✅ Akun login berhasil dibuat'); invalidateCache('sales-list'); initSalesList(true); }
+    else { toast('Error: ' + (r.message || '')); }
   });
 }
 function simpanSalesEdit(id) {
