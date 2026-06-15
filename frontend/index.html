@@ -651,6 +651,23 @@ const visitMap = {
 const settingMap = {
   setting_id: 'id', key: 'key', value: 'value', description: 'description'
 };
+const productionMap = {
+  produksi_id: 'id', produk_id: 'product_id', qty_produksi: 'qty',
+  hpp_per_unit: 'hpp_per_unit', total_hpp: 'total_hpp',
+  tanggal_produksi: 'production_date', tanggal_expired: 'expiry_date',
+  batch: 'batch_number', keterangan: 'notes', created_by: 'created_by',
+};
+const stockMap = {
+  stok_id: 'id', produk_id: 'product_id', batch: 'batch_number',
+  qty_masuk: 'qty_in', qty_keluar: 'qty_out', qty_sisa: 'qty_remaining',
+  satuan: 'unit',
+};
+const consignmentMap = {
+  konsinyasi_id: 'id', produk_id: 'product_id',
+  qty_titip_awal: 'qty_consigned', qty_terjual: 'qty_sold',
+  qty_retur: 'qty_returned', qty_sisa: 'qty_remaining',
+  target_display: 'target_display',
+};
 
 // ── Helper: get user session ───────────────────────────────────────
 async function requireAuth() {
@@ -1239,7 +1256,8 @@ bridge._actions['uploadFotoKunjungan'] = async (params) => {
 
 bridge._actions['getStokGudang'] = async () => {
   const { data } = await _supabase.from('warehouse_stock').select('*, products(*)');
-  return ok(data);
+  const mapped = (data || []).map(s => mapFields(s, stockMap));
+  return ok(mapped);
 };
 
 bridge._actions['updateStokGudang'] = async (params) => {
@@ -1271,12 +1289,16 @@ bridge._actions['deleteStokKonsinyasi'] = async (params) => {
 };
 bridge._actions['getStokKonsinyasiById'] = async (params) => {
   const { data } = await _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)').eq('id', params.id).maybeSingle();
-  return ok(data);
+  return ok(data ? mapFields(data, consignmentMap) : null);
 };
 
-bridge._actions['getStokKonsinyasi'] = async () => {
-  const { data } = await _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
-  return ok(data);
+bridge._actions['getStokKonsinyasi'] = async (params) => {
+  const d = params?.data || params;
+  let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
+  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  const { data } = await query;
+  const mapped = (data || []).map(s => mapFields(s, consignmentMap));
+  return ok(mapped);
 };
 
 bridge._actions['updateStokKonsinyasi'] = async (params) => {
@@ -1399,7 +1421,8 @@ bridge._actions['deleteBiaya'] = async (params) => {
 
 bridge._actions['getProduksi'] = async () => {
   const { data } = await _supabase.from('productions').select('*, products(*), users(full_name)');
-  return ok(data);
+  const mapped = (data || []).map(p => mapFields(p, productionMap));
+  return ok(mapped);
 };
 
 bridge._actions['createProduksi'] = async (params) => {
@@ -4285,7 +4308,8 @@ function showRiwayatProduksi(){
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Belum ada produksi.</p></div>';return}
     var html='<div class="card"><h4>Riwayat Produksi</h4><div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Produk</th><th>Batch</th><th>Qty</th><th>HPP</th><th>Total</th><th>Tgl</th></tr></thead><tbody>';
     data.forEach(function(p){
-      html+='<tr><td>'+(p.produksi_id||'')+'</td><td>'+(p.produk_id||'')+'</td><td>'+(p.batch_number||p.batch||'')+'</td>';
+      var pn=(p.products||{}).name||p.produk_id||'';
+      html+='<tr><td>'+(p.produksi_id||'').substring(0,8)+'</td><td>'+pn+'</td><td>'+(p.batch||p.batch_number||'-')+'</td>';
       html+='<td>'+(p.qty_produksi||0)+'</td><td>Rp '+fmt(p.hpp_per_unit||0)+'</td><td>Rp '+fmt((p.qty_produksi||0)*(p.hpp_per_unit||0))+'</td><td>'+(p.tanggal_produksi||'').substring(0,10)+'</td></tr>';
     });
     html+='</tbody></table></div></div>';

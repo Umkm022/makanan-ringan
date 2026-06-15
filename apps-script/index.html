@@ -2507,7 +2507,8 @@ function showRiwayatProduksi(){
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Belum ada produksi.</p></div>';return}
     var html='<div class="card"><h4>Riwayat Produksi</h4><div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Produk</th><th>Batch</th><th>Qty</th><th>HPP</th><th>Total</th><th>Tgl</th></tr></thead><tbody>';
     data.forEach(function(p){
-      html+='<tr><td>'+(p.produksi_id||'')+'</td><td>'+(p.produk_id||'')+'</td><td>'+(p.batch_number||p.batch||'')+'</td>';
+      var pn=(p.products||{}).name||p.produk_id||'';
+      html+='<tr><td>'+(p.produksi_id||'').substring(0,8)+'</td><td>'+pn+'</td><td>'+(p.batch||p.batch_number||'-')+'</td>';
       html+='<td>'+(p.qty_produksi||0)+'</td><td>Rp '+fmt(p.hpp_per_unit||0)+'</td><td>Rp '+fmt((p.qty_produksi||0)*(p.hpp_per_unit||0))+'</td><td>'+(p.tanggal_produksi||'').substring(0,10)+'</td></tr>';
     });
     html+='</tbody></table></div></div>';
