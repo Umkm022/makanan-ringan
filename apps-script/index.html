@@ -2472,6 +2472,7 @@ function showProduksi(){
     html+='<div class="form-group"><label>Produk</label><select id="fProdukProduksi"></select></div>';
     html+='<div class="form-row"><div class="form-group"><label>Jumlah Produksi</label><input type="number" id="fQtyProduksi" min="1"></div>';
     html+='<div class="form-group"><label>HPP per Unit</label><input type="number" id="fHppProduksi" min="0"></div></div>';
+    html+='<div class="form-group"><label>Batch / No. Produksi</label><input id="fBatchProduksi" placeholder="Misal: BATCH-001"></div>';
     html+='<div class="form-group"><label>Tanggal Expired (opsional)</label><input type="date" id="fExpProduksi"></div>';
     html+='<div class="form-group"><label>Keterangan</label><input id="fKetProduksi" placeholder="Opsional"></div>';
     html+='<button class="btn btn-success" onclick="saveProduksi()">Simpan Produksi</button>';
@@ -2485,6 +2486,7 @@ function saveProduksi(){
     produk_id:document.getElementById('fProdukProduksi').value,
     qty_produksi:parseFloat(document.getElementById('fQtyProduksi').value),
     hpp_per_unit:parseFloat(document.getElementById('fHppProduksi').value),
+    batch_number:document.getElementById('fBatchProduksi').value.trim(),
     tanggal_expired:document.getElementById('fExpProduksi').value,
     keterangan:document.getElementById('fKetProduksi').value
   };

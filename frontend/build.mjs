@@ -20,7 +20,7 @@ function resolveIncludes(content, baseDir) {
   });
 }
 
-// Trigger rebuild: fix production/stock field name mapping + consignment map
+// Trigger rebuild: add batch input to production form
 function build() {
   console.log('Building frontend...');
   let html = readFileSync(resolve(APPS_SCRIPT, 'index.html'), 'utf8');
