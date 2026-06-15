@@ -2919,18 +2919,18 @@ function renderDashboard(d){
   // ===== SECTION 2: KPI GRID =====
   html+='<div class="kpi-grid">';
   var kpis=[
-    {v:d.kpi.omzet_hari_ini||0,l:'Omzet Hari Ini',s:'Rp',c:'#2E7D32'},
-    {v:d.kpi.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',c:'#1976D2'},
-    {v:d.kpi.laba_kotor||0,l:'Laba Kotor',s:'Rp',c:'#1565C0'},
-    {v:d.kpi.laba_bersih||0,l:'Laba Bersih',s:'Rp',c:((d.kpi.laba_bersih||0)>=0?'#2E7D32':'#C62828')},
-    {v:d.kpi.piutang_aktif||0,l:'Piutang Aktif',s:'Rp',c:'#E65100'},
-    {v:d.kpi.stok_gudang||0,l:'Stok Gudang',s:'',c:'#6A1B9A'},
-    {v:d.kpi.stok_konsinyasi||0,l:'Stok Konsinyasi',s:'',c:'#00838F'},
-    {v:d.kpi.komisi_bulan_ini||0,l:'Komisi Bulan Ini',s:'Rp',c:'#F57C00'}
+    {v:d.kpi.omzet_hari_ini||0,l:'Omzet Hari Ini',s:'Rp',c:'#2E7D32',t:'omzet-hari'},
+    {v:d.kpi.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',c:'#1976D2',t:'omzet-bulan'},
+    {v:d.kpi.laba_kotor||0,l:'Laba Kotor',s:'Rp',c:'#1565C0',t:'laba-kotor'},
+    {v:d.kpi.laba_bersih||0,l:'Laba Bersih',s:'Rp',c:((d.kpi.laba_bersih||0)>=0?'#2E7D32':'#C62828'),t:'laba-bersih'},
+    {v:d.kpi.piutang_aktif||0,l:'Piutang Aktif',s:'Rp',c:'#E65100',t:'piutang'},
+    {v:d.kpi.stok_gudang||0,l:'Stok Gudang',s:'',c:'#6A1B9A',t:'stok-gudang'},
+    {v:d.kpi.stok_konsinyasi||0,l:'Stok Konsinyasi',s:'',c:'#00838F',t:'stok-konsinyasi'},
+    {v:d.kpi.komisi_bulan_ini||0,l:'Komisi Bulan Ini',s:'Rp',c:'#F57C00',t:'komisi'}
   ];
   kpis.forEach(function(k){
     var val=k.s==='Rp'?'Rp '+fmt(k.v):fmt(k.v);
-    html+='<div class="kpi-card" style="border-top:3px solid '+k.c+'">';
+    html+='<div class="kpi-card" style="border-top:3px solid '+k.c+'" onclick="showKpiDetail(\''+k.t+'\')">';
     html+='<div class="kpi-value" style="color:'+k.c+'">'+val+'</div>';
     html+='<div class="kpi-label">'+k.l+'</div>';
     if(k.s==='Rp'&&k.v>0) html+='<div class="kpi-sub">'+k.l+'</div>';
@@ -3047,17 +3047,17 @@ function renderSalesDashboard(d){
   html+='<button class="btn btn-sm btn-outline" onclick="initSalesDashboard(true)">🔄 Refresh</button></div>';
   html+='<div class="kpi-grid">';
   var kpis=[
-    {v:d.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp'},
-    {v:d.toko_aktif||0,l:'Toko Aktif',s:''},
-    {v:d.kunjungan_hari_ini||0,l:'Kunjungan Hari Ini',s:''},
-    {v:d.piutang_area||0,l:'Piutang Area',s:'Rp'},
-    {v:d.komisi_ready||0,l:'Komisi Siap Cair',s:'Rp'},
-    {v:d.komisi_paid||0,l:'Komisi Cair',s:'Rp'},
-    {v:d.invoice_belum_lunas||0,l:'Invoice Belum Lunas',s:''}
+    {v:d.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',t:'omzet-bulan'},
+    {v:d.toko_aktif||0,l:'Toko Aktif',s:'',t:'toko-aktif'},
+    {v:d.kunjungan_hari_ini||0,l:'Kunjungan Hari Ini',s:'',t:'kunjungan'},
+    {v:d.piutang_area||0,l:'Piutang Area',s:'Rp',t:'piutang'},
+    {v:d.komisi_ready||0,l:'Komisi Siap Cair',s:'Rp',t:'komisi-ready'},
+    {v:d.komisi_paid||0,l:'Komisi Cair',s:'Rp',t:'komisi-paid'},
+    {v:d.invoice_belum_lunas||0,l:'Invoice Belum Lunas',s:'',t:'invoice-baru'}
   ];
   kpis.forEach(function(k){
     var val=k.s==='Rp'?'Rp '+fmt(k.v):fmt(k.v);
-    html+='<div class="kpi-card"><div class="kpi-value">'+val+'</div><div class="kpi-label">'+k.l+'</div></div>';
+    html+='<div class="kpi-card" onclick="showKpiDetail(\''+k.t+'\')"><div class="kpi-value">'+val+'</div><div class="kpi-label">'+k.l+'</div></div>';
   });
   html+='</div>';
   if(d.target_bulanan&&d.target_bulanan>0){
