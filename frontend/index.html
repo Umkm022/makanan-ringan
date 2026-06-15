@@ -341,8 +341,7 @@ body.sales-layout .tabbar{display:flex !important}
 
 /* Dashboard KPI */
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:16px}
-.kpi-card{background:#fff;border-radius:12px;padding:16px;box-shadow:var(--shadow);text-align:center;cursor:pointer;transition:transform .15s,box-shadow .15s}
-.kpi-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.kpi-card{background:#fff;border-radius:12px;padding:16px;box-shadow:var(--shadow);text-align:center}
 .kpi-card .kpi-value{font-size:24px;font-weight:700;color:var(--primary)}
 .kpi-card .kpi-label{font-size:11px;color:var(--text-light);margin-top:4px}
 .kpi-card .kpi-sub{font-size:10px;color:var(--text-light);margin-top:2px}
@@ -2286,7 +2285,7 @@ window.doSetup = async function doSetup() {
     const result = await bridge.direct('setupOwner', { fullName, username, email, password });
     if (result.success) {
       if (successEl) { successEl.style.display = 'block'; successEl.textContent = result.message; }
-      setTimeout(() => { showLogin(); history.replaceState(null, '', window.location.pathname); }, 2000);
+      setTimeout(() => { window.location.href = '?page=login'; }, 2000);
     } else {
       if (btn) btn.disabled = false;
       if (loadingEl) loadingEl.style.display = 'none';
@@ -2303,12 +2302,11 @@ window.doSetup = async function doSetup() {
 
 // ── Go to setup page ──────────────────────────────────────────────
 window.goSetup = function goSetup() {
-  showSetup(); history.replaceState(null, '', window.location.pathname);
+  window.location.href = '?page=setup';
 };
 
 // ── Auto-auth: check session on page load ─────────────────────────
 (async function initAuth() {
-  history.replaceState(null, '', window.location.pathname);
   try {
     const { data: { session } } = await _supabase.auth.getSession();
     if (session) {
@@ -2780,76 +2778,6 @@ function showModal(html){
 }
 function closeModal(){document.getElementById('modalOverlay').style.display='none'}
 
-function showKpiDetail(type){
-  var titles={omzet:'Omzet',laba:'Laba',piutang:'Piutang',stok:'Stok',komisi:'Komisi',toko:'Toko',kunjungan:'Kunjungan',invoice:'Invoice'};
-  var labels={
-    'omzet-hari':'Omzet Hari Ini','omzet-bulan':'Omzet Bulan Ini','laba-kotor':'Laba Kotor','laba-bersih':'Laba Bersih',
-    'piutang':'Piutang Aktif','stok-gudang':'Stok Gudang','stok-konsinyasi':'Stok Konsinyasi',
-    'komisi':'Komisi Bulan Ini','toko-aktif':'Toko Aktif','kunjungan':'Kunjungan Hari Ini',
-    'komisi-ready':'Komisi Siap Cair','komisi-paid':'Komisi Cair','invoice-baru':'Invoice Belum Lunas'
-  };
-  var title=labels[type]||'Detail';
-  showModal('<div style="max-width:600px"><h3 style="margin-bottom:12px;color:var(--primary)">'+title+'</h3><div id="kpiDetailBody"><div class="loading">Memuat...</div></div></div>');
-
-  if(type==='stok-gudang')_loadStokGudangDetail();
-  else if(type==='stok-konsinyasi')_loadStokKonsinyasiDetail();
-  else _loadKpiSummary(type);
-}
-
-function _loadStokGudangDetail(){
-  api('getStokGudang',{},function(r){
-    var el=document.getElementById('kpiDetailBody');
-    if(!r.success){el.innerHTML='<p>Gagal memuat data.</p>';return}
-    var data=r.data||[];
-    if(!data.length){el.innerHTML='<p style="color:var(--text-light)">Stok gudang kosong.</p>';return}
-    var total=data.reduce(function(s,i){return s+(i.qty_remaining||0)},0);
-    var html='<p style="margin-bottom:8px;color:var(--text-light)">Total <strong>'+data.length+'</strong> produk, <strong>'+total+'</strong> pcs</p>';
-    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s){
-      var prod=s.products||{};
-      html+='<tr><td>'+(prod.name||s.produk_id||'')+'</td><td>'+(s.batch||s.batch_number||'-')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
-    });
-    html+='</tbody></table></div>';
-    el.innerHTML=html;
-  });
-}
-
-function _loadStokKonsinyasiDetail(){
-  api('getStokKonsinyasi',{},function(r){
-    var el=document.getElementById('kpiDetailBody');
-    if(!r.success){el.innerHTML='<p>Gagal memuat data.</p>';return}
-    var data=r.data||[];
-    if(!data.length){el.innerHTML='<p style="color:var(--text-light)">Stok konsinyasi kosong.</p>';return}
-    var total=data.reduce(function(s,i){return s+(i.qty_sisa||0)},0);
-    var html='<p style="margin-bottom:8px;color:var(--text-light)">Total <strong>'+data.length+'</strong> item, <strong>'+total+'</strong> pcs</p>';
-    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Toko</th><th>Produk</th><th>Sisa</th></tr></thead><tbody>';
-    data.forEach(function(s){
-      var cust=s.customers||{}, prod=s.products||{};
-      html+='<tr><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(prod.name||s.produk_id||'')+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>';
-    });
-    html+='</tbody></table></div>';
-    el.innerHTML=html;
-  });
-}
-
-function _loadKpiSummary(type){
-  var info={
-    'omzet-hari':'Total omzet penjualan hari ini yang sudah dibayar (PAID).',
-    'omzet-bulan':'Total omzet penjualan bulan ini yang sudah dibayar (PAID).',
-    'laba-kotor':'Estimasi laba kotor: 30% dari omzet bulan ini (sebelum dikurangi biaya & komisi).',
-    'laba-bersih':'Estimasi laba bersih: laba kotor dikurangi biaya operasional & komisi sales.',
-    'piutang':'Total tagihan (invoice) yang masih belum dibayar oleh customer.',
-    'komisi':'Total komisi sales bulan ini.',
-    'toko-aktif':'Jumlah toko/customer yang masih aktif bekerja sama.',
-    'kunjungan':'Jumlah kunjungan sales hari ini.',
-    'komisi-ready':'Total komisi yang sudah siap dicairkan.',
-    'komisi-paid':'Total komisi yang sudah dicairkan.',
-    'invoice-baru':'Jumlah invoice yang masih belum dibayar.'
-  };
-  var el=document.getElementById('kpiDetailBody');
-  el.innerHTML='<div style="padding:16px 0"><p style="color:var(--text-light);line-height:1.6">'+(info[type]||'')+'</p></div>';
-}
-
 // ====== TOAST ======
 function toast(msg){
   var t=document.getElementById('toast');
@@ -2991,18 +2919,18 @@ function renderDashboard(d){
   // ===== SECTION 2: KPI GRID =====
   html+='<div class="kpi-grid">';
   var kpis=[
-    {v:d.kpi.omzet_hari_ini||0,l:'Omzet Hari Ini',s:'Rp',c:'#2E7D32',t:'omzet-hari'},
-    {v:d.kpi.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',c:'#1976D2',t:'omzet-bulan'},
-    {v:d.kpi.laba_kotor||0,l:'Laba Kotor',s:'Rp',c:'#1565C0',t:'laba-kotor'},
-    {v:d.kpi.laba_bersih||0,l:'Laba Bersih',s:'Rp',c:((d.kpi.laba_bersih||0)>=0?'#2E7D32':'#C62828'),t:'laba-bersih'},
-    {v:d.kpi.piutang_aktif||0,l:'Piutang Aktif',s:'Rp',c:'#E65100',t:'piutang'},
-    {v:d.kpi.stok_gudang||0,l:'Stok Gudang',s:'',c:'#6A1B9A',t:'stok-gudang'},
-    {v:d.kpi.stok_konsinyasi||0,l:'Stok Konsinyasi',s:'',c:'#00838F',t:'stok-konsinyasi'},
-    {v:d.kpi.komisi_bulan_ini||0,l:'Komisi Bulan Ini',s:'Rp',c:'#F57C00',t:'komisi'}
+    {v:d.kpi.omzet_hari_ini||0,l:'Omzet Hari Ini',s:'Rp',c:'#2E7D32'},
+    {v:d.kpi.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',c:'#1976D2'},
+    {v:d.kpi.laba_kotor||0,l:'Laba Kotor',s:'Rp',c:'#1565C0'},
+    {v:d.kpi.laba_bersih||0,l:'Laba Bersih',s:'Rp',c:((d.kpi.laba_bersih||0)>=0?'#2E7D32':'#C62828')},
+    {v:d.kpi.piutang_aktif||0,l:'Piutang Aktif',s:'Rp',c:'#E65100'},
+    {v:d.kpi.stok_gudang||0,l:'Stok Gudang',s:'',c:'#6A1B9A'},
+    {v:d.kpi.stok_konsinyasi||0,l:'Stok Konsinyasi',s:'',c:'#00838F'},
+    {v:d.kpi.komisi_bulan_ini||0,l:'Komisi Bulan Ini',s:'Rp',c:'#F57C00'}
   ];
   kpis.forEach(function(k){
     var val=k.s==='Rp'?'Rp '+fmt(k.v):fmt(k.v);
-    html+='<div class="kpi-card" style="border-top:3px solid '+k.c+'" onclick="showKpiDetail(\''+k.t+'\')">';
+    html+='<div class="kpi-card" style="border-top:3px solid '+k.c+'">';
     html+='<div class="kpi-value" style="color:'+k.c+'">'+val+'</div>';
     html+='<div class="kpi-label">'+k.l+'</div>';
     if(k.s==='Rp'&&k.v>0) html+='<div class="kpi-sub">'+k.l+'</div>';
@@ -3119,17 +3047,17 @@ function renderSalesDashboard(d){
   html+='<button class="btn btn-sm btn-outline" onclick="initSalesDashboard(true)">🔄 Refresh</button></div>';
   html+='<div class="kpi-grid">';
   var kpis=[
-    {v:d.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',t:'omzet-bulan'},
-    {v:d.toko_aktif||0,l:'Toko Aktif',s:'',t:'toko-aktif'},
-    {v:d.kunjungan_hari_ini||0,l:'Kunjungan Hari Ini',s:'',t:'kunjungan'},
-    {v:d.piutang_area||0,l:'Piutang Area',s:'Rp',t:'piutang'},
-    {v:d.komisi_ready||0,l:'Komisi Siap Cair',s:'Rp',t:'komisi-ready'},
-    {v:d.komisi_paid||0,l:'Komisi Cair',s:'Rp',t:'komisi-paid'},
-    {v:d.invoice_belum_lunas||0,l:'Invoice Belum Lunas',s:'',t:'invoice-baru'}
+    {v:d.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp'},
+    {v:d.toko_aktif||0,l:'Toko Aktif',s:''},
+    {v:d.kunjungan_hari_ini||0,l:'Kunjungan Hari Ini',s:''},
+    {v:d.piutang_area||0,l:'Piutang Area',s:'Rp'},
+    {v:d.komisi_ready||0,l:'Komisi Siap Cair',s:'Rp'},
+    {v:d.komisi_paid||0,l:'Komisi Cair',s:'Rp'},
+    {v:d.invoice_belum_lunas||0,l:'Invoice Belum Lunas',s:''}
   ];
   kpis.forEach(function(k){
     var val=k.s==='Rp'?'Rp '+fmt(k.v):fmt(k.v);
-    html+='<div class="kpi-card" onclick="showKpiDetail(\''+k.t+'\')"><div class="kpi-value">'+val+'</div><div class="kpi-label">'+k.l+'</div></div>';
+    html+='<div class="kpi-card"><div class="kpi-value">'+val+'</div><div class="kpi-label">'+k.l+'</div></div>';
   });
   html+='</div>';
   if(d.target_bulanan&&d.target_bulanan>0){
@@ -5670,7 +5598,8 @@ function uploadFotoKunjungan(tipe, dataUrl, lat, lng) {
   var el = document.getElementById(statusId);
   if (!el) return;
   el.innerHTML = '<span style="color:var(--text-light)">Mengupload...</span>';
-  api('uploadFotoToko', { kunjunganId: kunjunganState.kunjunganId, dataUrl: dataUrl, tipe: tipe, latitude: lat, longitude: lng }, function(r) {
+  var blob = dataUrlToBlob(dataUrl);
+  api('uploadFotoToko', { kunjunganId: kunjunganState.kunjunganId, fileName: 'foto_'+tipe+'_'+Date.now()+'.jpg', fileData: blob, tipe: tipe, lat: lat, lng: lng }, function(r) {
     el.innerHTML = r.success
       ? '<span style="color:var(--success)">✅ Foto '+(tipe||'sebelum')+' terupload'+(lat&&lng?' 📍':'')+'</span>'
       : '<span style="color:var(--error)">❌ '+(r.message||'Gagal upload')+'</span>';

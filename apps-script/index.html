@@ -3087,6 +3087,7 @@ function renderSalesList(data) {
       var isActive = s.is_active !== false && s.status !== 'NONAKTIF';
       html += '<tr><td>' + (s.code || s.sales_code || '') + '</td><td><strong>' + (s.full_name || s.nama || '') + '</strong>' + (!isActive ? ' <small style="color:var(--error)">(nonaktif)</small>' : '') + '</td><td>' + (s.phone || '') + '</td><td>' + (s.komisi_rate || 0) + '%</td><td>Rp ' + fmt(s.target_bulanan || 0) + '</td><td>' + getStatusBadge(isActive ? 'AKTIF' : 'NONAKTIF') + '</td>';
       html += '<td><button class="btn btn-sm btn-outline" onclick="editSales(\'' + s.sales_id + '\')" title="Edit">✏️</button> ';
+      html += '<button class="btn btn-sm btn-outline" onclick="showSalesAuthForm(\'' + s.sales_id + '\')" title="Buat Akun Login">🔑</button> ';
       if (isActive) {
         html += '<button class="btn btn-sm btn-danger" onclick="hapusSales(\'' + s.sales_id + '\')" title="Nonaktifkan">⛔</button>';
       } else {
@@ -3137,6 +3138,25 @@ function editSales(id) {
   api('getSalesById', { id: id }, function(r) {
     if (!r.success) { toast('Gagal: ' + (r.message || '')); return; }
     showSalesForm(r.data || {});
+  });
+}
+function showSalesAuthForm(salesId) {
+  var html = '<h3>🔑 Buat Akun Login Sales</h3>';
+  html += '<p style="color:var(--text-light);margin-bottom:12px">Buat username dan password agar sales bisa login ke aplikasi.</p>';
+  html += '<div class="form-group"><label>Username</label><input id="fAuthUsername"></div>';
+  html += '<div class="form-group"><label>Password</label><input type="password" id="fAuthPassword"></div>';
+  html += '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+  html += '<button class="btn btn-primary" onclick="simpanSalesAuth(\'' + salesId + '\')">Buat Akun</button></div>';
+  showModal(html);
+}
+function simpanSalesAuth(id) {
+  var username = document.getElementById('fAuthUsername').value.trim();
+  var password = document.getElementById('fAuthPassword').value;
+  if (!username || !password) { toast('Username dan password wajib diisi'); return; }
+  api('createSalesAuth', { data: { sales_id: id, username: username, password: password } }, function(r) {
+    closeModal();
+    if (r.success) { toast('✅ Akun login berhasil dibuat'); invalidateCache('sales-list'); initSalesList(true); }
+    else { toast('Error: ' + (r.message || '')); }
   });
 }
 function simpanSalesEdit(id) {
