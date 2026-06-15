@@ -886,7 +886,7 @@ bridge._actions['getProduksi'] = async () => {
 };
 
 bridge._actions['createProduksi'] = async (params) => {
-  const session = await requireAuth();
+  const profile = await getCurrentProfile();
   const d = params.data || params;
   const qty = parseFloat(d.qty_produksi) || 0;
   const hpp = parseFloat(d.hpp_per_unit) || 0;
@@ -899,7 +899,7 @@ bridge._actions['createProduksi'] = async (params) => {
     production_date: d.tanggal_produksi || new Date().toISOString(),
     expiry_date: d.tanggal_expired || null,
     notes: d.keterangan || '',
-    created_by: session.user.id,
+    created_by: profile.id,
   }).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Produksi berhasil dicatat');
