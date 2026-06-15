@@ -1166,7 +1166,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
   var [sales, customers, products, visits, unpaidInv, piutang, produksi, stok, konsinyasi, todayInv, monthInv, monthExpenses, monthCommissions, topP, topS, chartD, chartM] = await Promise.all([
     safeCount('sales'), safeCount('customers'), safeCount('products'),
     safeCount('visits'), safeCount('invoices', { status: 'UNPAID' }),
-    safeCount('receivables'), safeCount('productions'),
+    _supabase.from('receivables').select('remaining').neq('status', 'PAID'), safeCount('productions'),
     safeList('warehouse_stock'), safeList('consignment_stock'),
     _supabase.from('invoices').select('total').eq('status', 'PAID').gte('invoice_date', today).lte('invoice_date', today),
     _supabase.from('invoices').select('total').eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
@@ -1183,6 +1183,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
   var expenses = (monthExpenses.data || []).reduce(function(s, e){ return s + (e.amount || 0); }, 0);
   var komisi = (monthCommissions.data || []).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var stokGudang = (stok.data || []).reduce(function(s, item){ return s + (item.qty_remaining || 0); }, 0);
+  var totalPiutang = (piutang.data || []).reduce(function(s, r){ return s + (r.remaining || 0); }, 0);
   // Simple laba estimate: 30% of omzet
   var labaKotor = Math.round(omzetBulan * 0.3);
   var labaBersih = Math.max(0, labaKotor - expenses - komisi);
@@ -1206,7 +1207,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
     kpi: {
       omzet_hari_ini: omzetHari, omzet_bulan_ini: omzetBulan,
       laba_kotor: labaKotor, laba_bersih: labaBersih,
-      piutang_aktif: piutang.count || 0,
+      piutang_aktif: totalPiutang,
       stok_gudang: stokGudang,
       stok_konsinyasi: (konsinyasi.data || []).reduce(function(s, k){ return s + (k.qty_remaining || 0); }, 0),
       komisi_bulan_ini: komisi,
@@ -1217,7 +1218,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
     chart_bulanan: chartBulanan,
     total_sales: sales.count, total_customers: customers.count,
     total_products: products.count, total_visits: visits.count,
-    total_unpaid_invoices: unpaidInv.count, total_piutang: piutang.count,
+    total_unpaid_invoices: unpaidInv.count, total_piutang: totalPiutang,
     total_productions: produksi.count, warehouse_stock: stok.data || [],
   });
 };
