@@ -1239,7 +1239,7 @@ bridge._actions['restockFromKunjungan'] = async (params) => {
   return ok(null, 'Restock berhasil');
 };
 
-bridge._actions['uploadFotoKunjungan'] = async (params) => {
+bridge._actions['uploadFotoToko'] = bridge._actions['uploadFotoKunjungan'] = async (params) => {
   const d = params.data || params;
   var kunjunganId = d.kunjunganId, tipe = d.tipe || 'sebelum', dataUrl = d.dataUrl;
   if (!kunjunganId || !dataUrl) return fail('Parameter kurang');
