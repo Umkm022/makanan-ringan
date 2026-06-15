@@ -947,6 +947,74 @@ function showModal(html){
 }
 function closeModal(){document.getElementById('modalOverlay').style.display='none'}
 
+function showKpiDetail(type){
+  var labels={
+    'omzet-hari':'Omzet Hari Ini','omzet-bulan':'Omzet Bulan Ini','laba-kotor':'Laba Kotor','laba-bersih':'Laba Bersih',
+    'piutang':'Piutang Aktif','stok-gudang':'Stok Gudang','stok-konsinyasi':'Stok Konsinyasi',
+    'komisi':'Komisi Bulan Ini','toko-aktif':'Toko Aktif','kunjungan':'Kunjungan Hari Ini',
+    'komisi-ready':'Komisi Siap Cair','komisi-paid':'Komisi Cair','invoice-baru':'Invoice Belum Lunas'
+  };
+  var title=labels[type]||'Detail';
+  showModal('<div style="max-width:600px"><h3 style="margin-bottom:12px;color:var(--primary)">'+title+'</h3><div id="kpiDetailBody"><div class="loading">Memuat...</div></div></div>');
+  if(type==='stok-gudang')_loadStokGudangDetail();
+  else if(type==='stok-konsinyasi')_loadStokKonsinyasiDetail();
+  else _loadKpiSummary(type);
+}
+function _loadStokGudangDetail(){
+  api('getStokGudang',{},function(r){
+    var el=document.getElementById('kpiDetailBody');
+    if(!r.success){el.innerHTML='<p>Gagal memuat data.</p>';return}
+    var data=r.data||[];
+    if(!data.length){el.innerHTML='<p style="color:var(--text-light)">Stok gudang kosong.</p>';return}
+    var total=data.reduce(function(s,i){return s+(i.qty_remaining||0)},0);
+    var html='<p style="margin-bottom:8px;color:var(--text-light)">Total <strong>'+data.length+'</strong> produk, <strong>'+total+'</strong> pcs</p>';
+    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Sisa</th></tr></thead><tbody>';
+    data.forEach(function(s){
+      var prod=s.products||{};
+      html+='<tr><td>'+(prod.name||s.produk_id||'')+'</td><td>'+(s.batch||s.batch_number||'-')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    el.innerHTML=html;
+  });
+}
+function _loadStokKonsinyasiDetail(){
+  api('getStokKonsinyasi',{},function(r){
+    var el=document.getElementById('kpiDetailBody');
+    if(!r.success){el.innerHTML='<p>Gagal memuat data.</p>';return}
+    var data=r.data||[];
+    if(!data.length){el.innerHTML='<p style="color:var(--text-light)">Tidak ada stok konsinyasi.</p>';return}
+    var total=data.reduce(function(s,i){return s+(i.qty_remaining||0)},0);
+    var html='<p style="margin-bottom:8px;color:var(--text-light)">Total <strong>'+data.length+'</strong> produk, <strong>'+total+'</strong> pcs</p>';
+    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Produk</th><th>Toko</th><th>Sisa</th></tr></thead><tbody>';
+    data.forEach(function(s){
+      html+='<tr><td>'+(s.produk_nama||s.product_name||'')+'</td><td>'+(s.customer_nama||s.customer_name||'')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    el.innerHTML=html;
+  });
+}
+function _loadKpiSummary(type){
+  api('getKpiSummary',{type:type},function(r){
+    var el=document.getElementById('kpiDetailBody');
+    if(!r.success){el.innerHTML='<p>Gagal memuat detail.</p>';return}
+    var data=r.data||{};
+    var html='';
+    if(data.rows&&data.rows.length){
+      html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr>';
+      (data.headers||['Item','Value']).forEach(function(h){html+='<th>'+h+'</th>'});
+      html+='</tr></thead><tbody>';
+      data.rows.forEach(function(row){
+        html+='<tr>';
+        row.forEach(function(cell){html+='<td>'+cell+'</td>'});
+        html+='</tr>';
+      });
+      html+='</tbody></table></div>';
+    }
+    if(data.total!==undefined) html+='<p style="margin-top:8px;font-weight:700;color:var(--primary)">Total: '+fmt(data.total)+'</p>';
+    el.innerHTML=html||'<p style="color:var(--text-light)">Tidak ada data.</p>';
+  });
+}
+
 // ====== TOAST ======
 function toast(msg){
   var t=document.getElementById('toast');
