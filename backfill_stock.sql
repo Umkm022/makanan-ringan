@@ -1,4 +1,7 @@
--- Backfill warehouse_stock from existing productions that don't have stock entries
+-- Tambah unique constraint di product_id (dibutuhkan untuk ON CONFLICT)
+ALTER TABLE warehouse_stock ADD CONSTRAINT warehouse_stock_product_id_key UNIQUE (product_id);
+
+-- Backfill stok dari produksi yang sudah ada
 INSERT INTO warehouse_stock (product_id, qty_in, qty_out, qty_remaining, unit)
 SELECT 
   p.product_id,
