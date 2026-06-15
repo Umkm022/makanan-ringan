@@ -2256,7 +2256,7 @@ window.doSetup = async function doSetup() {
     const result = await bridge.direct('setupOwner', { fullName, username, email, password });
     if (result.success) {
       if (successEl) { successEl.style.display = 'block'; successEl.textContent = result.message; }
-      setTimeout(() => { window.location.href = '?page=login'; }, 2000);
+      setTimeout(() => { showLogin(); history.replaceState(null, '', window.location.pathname); }, 2000);
     } else {
       if (btn) btn.disabled = false;
       if (loadingEl) loadingEl.style.display = 'none';
@@ -2273,11 +2273,12 @@ window.doSetup = async function doSetup() {
 
 // ── Go to setup page ──────────────────────────────────────────────
 window.goSetup = function goSetup() {
-  window.location.href = '?page=setup';
+  showSetup(); history.replaceState(null, '', window.location.pathname);
 };
 
 // ── Auto-auth: check session on page load ─────────────────────────
 (async function initAuth() {
+  history.replaceState(null, '', window.location.pathname);
   try {
     const { data: { session } } = await _supabase.auth.getSession();
     if (session) {
