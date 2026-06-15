@@ -1143,17 +1143,17 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   if (visit.status !== 'DRAFT') return fail('Kunjungan sudah difinalisasi');
   var customerId = visit.customer_id, salesId = visit.sales_id, invoiceTotal = visit.total_invoice || 0;
   const { data: details } = await _supabase.from('visit_details').select('*').eq('visit_id', visit.id);
-  for (var d of details || []) {
-    if (d.sold > 0 || d.damaged > 0 || d.returned > 0) {
-      var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('product_id', d.product_id).single();
-      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (d.sold || 0), qty_returned: (existing.qty_returned || 0) + (d.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (d.damaged || 0), qty_remaining: d.remaining }).eq('id', existing.id); }
-      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: d.product_id, sales_id: salesId, qty_consigned: 0, qty_sold: d.sold, qty_returned: d.returned, qty_damaged: d.damaged, qty_remaining: d.remaining, target_display: d.target_display }); }
+  for (var vd of details || []) {
+    if (vd.sold > 0 || vd.damaged > 0 || vd.returned > 0) {
+      var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('product_id', vd.product_id).single();
+      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (vd.sold || 0), qty_returned: (existing.qty_returned || 0) + (vd.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (vd.damaged || 0), qty_remaining: vd.remaining }).eq('id', existing.id); }
+      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: vd.product_id, sales_id: salesId, qty_consigned: 0, qty_sold: vd.sold, qty_returned: vd.returned, qty_damaged: vd.damaged, qty_remaining: vd.remaining, target_display: vd.target_display }); }
     }
-    if (d.returned > 0) {
-      await _supabase.from('returns').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, product_id: d.product_id, qty: d.returned, reason: 'TIDAK_LAKU', condition: 'MASUK_GUDANG' });
-      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.product_id).single();
-      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (d.returned || 0), qty_remaining: (gudang.qty_remaining || 0) + (d.returned || 0) }).eq('id', gudang.id); }
-      else { await _supabase.from('warehouse_stock').insert({ product_id: d.product_id, qty_in: d.returned, qty_out: 0, qty_remaining: d.returned, unit: 'PCS' }); }
+    if (vd.returned > 0) {
+      await _supabase.from('returns').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, product_id: vd.product_id, qty: vd.returned, reason: 'TIDAK_LAKU', condition: 'MASUK_GUDANG' });
+      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', vd.product_id).single();
+      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (vd.returned || 0), qty_remaining: (gudang.qty_remaining || 0) + (vd.returned || 0) }).eq('id', gudang.id); }
+      else { await _supabase.from('warehouse_stock').insert({ product_id: vd.product_id, qty_in: vd.returned, qty_out: 0, qty_remaining: vd.returned, unit: 'PCS' }); }
     }
   }
   var invoiceId = null;
