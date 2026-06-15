@@ -5620,8 +5620,7 @@ function uploadFotoKunjungan(tipe, dataUrl, lat, lng) {
   var el = document.getElementById(statusId);
   if (!el) return;
   el.innerHTML = '<span style="color:var(--text-light)">Mengupload...</span>';
-  var blob = dataUrlToBlob(dataUrl);
-  api('uploadFotoToko', { kunjunganId: kunjunganState.kunjunganId, fileName: 'foto_'+tipe+'_'+Date.now()+'.jpg', fileData: blob, tipe: tipe, lat: lat, lng: lng }, function(r) {
+  api('uploadFotoToko', { kunjunganId: kunjunganState.kunjunganId, dataUrl: dataUrl, tipe: tipe, latitude: lat, longitude: lng }, function(r) {
     el.innerHTML = r.success
       ? '<span style="color:var(--success)">✅ Foto '+(tipe||'sebelum')+' terupload'+(lat&&lng?' 📍':'')+'</span>'
       : '<span style="color:var(--error)">❌ '+(r.message||'Gagal upload')+'</span>';
