@@ -152,13 +152,7 @@
       var el = document.getElementById(statusId);
       if (!el) return;
       el.innerHTML = '<span style="color:var(--text-light)">Mengupload...</span>';
-      var parts = dataUrl.split(',');
-      var bstr = atob(parts[1]);
-      var n = bstr.length;
-      var u8arr = new Uint8Array(n);
-      while (n--) u8arr[n] = bstr.charCodeAt(n);
-      var blob = new Blob([u8arr], { type: 'image/jpeg' });
-      api('uploadFotoToko', { kunjunganId: kunjunganId, fileName: 'foto_'+tipe+'_'+Date.now()+'.jpg', fileData: blob, tipe: tipe, lat: lat, lng: lng }, function(r) {
+      api('uploadFotoToko', { kunjunganId: kunjunganId, dataUrl: dataUrl, tipe: tipe, latitude: lat, longitude: lng }, function(r) {
         el.innerHTML = r.success
           ? '<span style="color:var(--success)">✅ '+(tipe||'sebelum')+' terupload'+(lat&&lng?' 📍':'')+'</span>'
           : '<span style="color:var(--error)">❌ '+(r.message||'Gagal')+'</span>';
