@@ -4753,6 +4753,7 @@ function renderInvoiceNav() {
   html += '<div id="invoiceContent"><div class="loading">Memuat...</div></div>';
   document.getElementById('mainContent').innerHTML = html;
   if(role==='OWNER'||role==='ADMIN')loadInvSalesFilter();
+  else loadInvoiceView();
 }
 
 function loadInvSalesFilter(){
