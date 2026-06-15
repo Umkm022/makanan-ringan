@@ -2798,9 +2798,9 @@ function renderInvTable(el, data) {
   }
   var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Tgl</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>';
   data.forEach(function(inv) {
-    var tgl = inv.tanggal_invoice ? inv.tanggal_invoice.substring(0, 10) : '';
-    html += '<tr><td>' + (inv.invoice_id || '') + '</td><td>' + tgl + '</td><td>' + (inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
-    var st = (inv.status_pembayaran || '').toUpperCase();
+    var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : '';
+    html += '<tr><td>' + (inv.id || '') + '</td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
+    var st = (inv.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td></tr>';
   });
@@ -2827,16 +2827,16 @@ function renderPiutangTable(el, data) {
   }
   var html = '<div style="overflow-x:auto"><table><thead><tr><th>Piutang</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
   data.forEach(function(p) {
-    var jt = p.jatuh_tempo ? p.jatuh_tempo.substring(0, 10) : '';
-    var overdue = p.jatuh_tempo && new Date(p.jatuh_tempo) < new Date() && p.status !== 'PAID';
-    html += '<tr><td>' + (p.piutang_id || '') + '</td><td>' + (p.customer_id || '') + '</td><td>Rp ' + fmt(p.total_piutang || 0) + '</td>';
-    html += '<td><strong>Rp ' + fmt(p.sisa_piutang || 0) + '</strong></td>';
+    var jt = p.due_date ? p.due_date.substring(0, 10) : '';
+    var overdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'PAID';
+    html += '<tr><td>' + (p.id || '') + '</td><td>' + ((p.customers && p.customers.store_name) || p.customer_id || '') + '</td><td>Rp ' + fmt(p.total || 0) + '</td>';
+    html += '<td><strong>Rp ' + fmt(p.remaining || 0) + '</strong></td>';
     html += '<td style="color:' + (overdue ? 'var(--error)' : 'inherit') + '">' + jt + '</td>';
     var st = (p.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td>';
-    if (p.sisa_piutang > 0) {
-      html += '<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\'' + (p.piutang_id || '') + '\',\'' + (p.invoice_id || '') + '\',' + (p.sisa_piutang || 0) + ')" title="Bayar">💰</button></td>';
+    if ((p.remaining || 0) > 0) {
+      html += '<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\'' + (p.id || '') + '\',\'' + (p.invoice_id || '') + '\',' + (p.remaining || 0) + ')" title="Bayar">💰</button></td>';
     } else {
       html += '<td></td>';
     }
@@ -2870,8 +2870,8 @@ function doBayar() {
     data: {
       piutang_id: _piutangBayar.piutangId,
       invoice_id: _piutangBayar.invoiceId,
-      jumlah_bayar: jumlah,
-      metode_bayar: metode
+      amount: jumlah,
+      metode: metode
     }
   }, function(r) {
     if (r.success) { closeModal(); toast('Pembayaran berhasil!'); invalidateCache('pembayaran'); loadPiutangList(); }

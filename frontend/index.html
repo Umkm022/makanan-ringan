@@ -1372,7 +1372,18 @@ bridge._actions['getPiutang'] = async () => {
 
 bridge._actions['getAgingPiutang'] = async () => {
   const { data } = await _supabase.from('receivables').select('*, customers(*), sales(*)');
-  return ok(data);
+  var result = { '0-30': 0, '31-60': 0, '61-90': 0, '>90': 0, total: 0 };
+  (data || []).filter(function(p){ return p.status !== 'PAID'; }).forEach(function(p){
+    var days = p.due_date ? Math.floor((new Date() - new Date(p.due_date)) / (1000 * 60 * 60 * 24)) : 0;
+    var sisa = p.remaining || 0;
+    if (days <= 0) return;
+    if (days <= 30) result['0-30'] += sisa;
+    else if (days <= 60) result['31-60'] += sisa;
+    else if (days <= 90) result['61-90'] += sisa;
+    else result['>90'] += sisa;
+    result.total += sisa;
+  });
+  return ok(result);
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1381,17 +1392,27 @@ bridge._actions['getAgingPiutang'] = async () => {
 
 bridge._actions['createPembayaran'] = async (params) => {
   const d = params.data || params;
-  const { data, error } = await _supabase.from('payments').insert({
-    invoice_id: d.invoice_id,
-    customer_id: d.customer_id,
-    sales_id: d.sales_id,
+  if (!d.piutang_id) return fail('piutang_id diperlukan');
+  var { data: recv, error: recvErr } = await _supabase.from('receivables').select('*').eq('id', d.piutang_id).single();
+  if (recvErr) return fail('Data piutang tidak ditemukan: ' + recvErr.message);
+  var newRemaining = (recv.remaining || 0) - (d.amount || 0);
+  if (newRemaining < 0) return fail('Jumlah bayar melebihi sisa piutang');
+  var { data: payment, error: payErr } = await _supabase.from('payments').insert({
+    invoice_id: recv.invoice_id,
+    customer_id: recv.customer_id,
+    sales_id: recv.sales_id,
     amount: d.amount,
     method: d.metode,
     notes: d.notes,
     payment_date: new Date().toISOString(),
   }).select().single();
-  if (error) return fail(error.message);
-  return ok(data, 'Pembayaran berhasil');
+  if (payErr) return fail(payErr.message);
+  var newStatus = newRemaining <= 0 ? 'PAID' : 'PARTIAL';
+  await _supabase.from('receivables').update({ remaining: newRemaining, status: newStatus }).eq('id', d.piutang_id);
+  if (newStatus === 'PAID' && recv.invoice_id) {
+    await _supabase.from('invoices').update({ status: 'PAID' }).eq('id', recv.invoice_id);
+  }
+  return ok(payment, 'Pembayaran berhasil');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1585,25 +1606,26 @@ bridge._actions['getSalesDashboard'] = async () => {
   const profile = await getCurrentProfile();
   var today = new Date().toISOString().substring(0, 10);
   var monthStart = today.substring(0, 7) + '-01';
+  if (!profile.sales_id) return fail('Sales ID tidak ditemukan. Hubungi owner untuk setup akun.');
   var [visits, customers, invoices, monthInv, receivables, konsinyasi, komisi] = await Promise.all([
-    _supabase.from('visits').select('*', { count: 'exact', head: true }).eq('sales_id', profile.sales_id),
-    _supabase.from('customers').select('*').eq('sales_id', profile.sales_id),
+    _supabase.from('visits').select('*', { count: 'exact' }).eq('sales_id', profile.sales_id),
+    _supabase.from('customers').select('*', { count: 'exact', head: true }).eq('sales_id', profile.sales_id),
     _supabase.from('invoices').select('*').eq('sales_id', profile.sales_id),
     _supabase.from('invoices').select('total').eq('sales_id', profile.sales_id).eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
-    _supabase.from('receivables').select('remaining, invoices!inner(customer_id, sales_id)').eq('invoices.sales_id', profile.sales_id),
+    _supabase.from('receivables').select('remaining').eq('sales_id', profile.sales_id),
     _supabase.from('consignment_stock').select('qty_remaining').eq('sales_id', profile.sales_id),
     _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id).gte('created_at', monthStart),
   ]);
 
   var omzet = (monthInv.data || []).reduce(function(s, i){ return s + (i.total || 0); }, 0);
-  var piutang = (receivables.data || []).reduce(function(s, r){ return s + (r.remaining_amount || 0); }, 0);
+  var piutang = (receivables.data || []).reduce(function(s, r){ return s + (r.remaining || 0); }, 0);
   var stok = (konsinyasi.data || []).reduce(function(s, k){ return s + (k.qty_remaining || 0); }, 0);
   var komisiReady = (komisi.data || []).filter(function(c){ return c.status === 'READY' || c.status === 'UNPAID'; }).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var komisiPaid = (komisi.data || []).filter(function(c){ return c.status === 'PAID'; }).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var unpaid = (invoices.data || []).filter(function(i){ return i.status === 'UNPAID' || i.status === 'OVERDUE'; }).length;
   var todayVisits = (visits.data || []).filter(function(v){ return (v.visit_date || '').substring(0, 10) === today; });
 
-  var profileData = await _supabase.from('sales').select('target_bulanan').eq('id', profile.sales_id).single();
+  var { data: profileData } = await _supabase.from('sales').select('target_bulanan').eq('id', profile.sales_id).maybeSingle();
   var pencapaian = omzet;
 
   return ok({
@@ -2004,7 +2026,7 @@ bridge._actions['getStockPredictions'] = async () => {
   var predictions = (stocks || []).map(function(s) {
     var dailyAvg = s.qty_sold || 0;
     var daysLeft = dailyAvg > 0 ? Math.floor((s.qty_remaining || 0) / dailyAvg) : 99;
-    var status = daysLeft <= 7 ? 'HABIS' : daysLeft <= 14 ? 'SEGARA' : 'AMAN';
+    var status = daysLeft <= 7 ? 'kritis' : daysLeft <= 14 ? 'warning' : 'aman';
     return { stock_id: s.id, customer_id: s.customer_id, store_name: s.customers?.store_name || '', produk_id: s.product_id, produk_name: s.products?.name || '', qty_sisa: s.qty_remaining || 0, daily_avg_sales: dailyAvg, estimated_days_left: daysLeft, status: status };
   });
   return ok(predictions);
@@ -4630,9 +4652,9 @@ function renderInvTable(el, data) {
   }
   var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Tgl</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>';
   data.forEach(function(inv) {
-    var tgl = inv.tanggal_invoice ? inv.tanggal_invoice.substring(0, 10) : '';
-    html += '<tr><td>' + (inv.invoice_id || '') + '</td><td>' + tgl + '</td><td>' + (inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
-    var st = (inv.status_pembayaran || '').toUpperCase();
+    var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : '';
+    html += '<tr><td>' + (inv.id || '') + '</td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
+    var st = (inv.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td></tr>';
   });
@@ -4659,16 +4681,16 @@ function renderPiutangTable(el, data) {
   }
   var html = '<div style="overflow-x:auto"><table><thead><tr><th>Piutang</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
   data.forEach(function(p) {
-    var jt = p.jatuh_tempo ? p.jatuh_tempo.substring(0, 10) : '';
-    var overdue = p.jatuh_tempo && new Date(p.jatuh_tempo) < new Date() && p.status !== 'PAID';
-    html += '<tr><td>' + (p.piutang_id || '') + '</td><td>' + (p.customer_id || '') + '</td><td>Rp ' + fmt(p.total_piutang || 0) + '</td>';
-    html += '<td><strong>Rp ' + fmt(p.sisa_piutang || 0) + '</strong></td>';
+    var jt = p.due_date ? p.due_date.substring(0, 10) : '';
+    var overdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'PAID';
+    html += '<tr><td>' + (p.id || '') + '</td><td>' + ((p.customers && p.customers.store_name) || p.customer_id || '') + '</td><td>Rp ' + fmt(p.total || 0) + '</td>';
+    html += '<td><strong>Rp ' + fmt(p.remaining || 0) + '</strong></td>';
     html += '<td style="color:' + (overdue ? 'var(--error)' : 'inherit') + '">' + jt + '</td>';
     var st = (p.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td>';
-    if (p.sisa_piutang > 0) {
-      html += '<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\'' + (p.piutang_id || '') + '\',\'' + (p.invoice_id || '') + '\',' + (p.sisa_piutang || 0) + ')" title="Bayar">💰</button></td>';
+    if ((p.remaining || 0) > 0) {
+      html += '<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\'' + (p.id || '') + '\',\'' + (p.invoice_id || '') + '\',' + (p.remaining || 0) + ')" title="Bayar">💰</button></td>';
     } else {
       html += '<td></td>';
     }
@@ -4702,8 +4724,8 @@ function doBayar() {
     data: {
       piutang_id: _piutangBayar.piutangId,
       invoice_id: _piutangBayar.invoiceId,
-      jumlah_bayar: jumlah,
-      metode_bayar: metode
+      amount: jumlah,
+      metode: metode
     }
   }, function(r) {
     if (r.success) { closeModal(); toast('Pembayaran berhasil!'); invalidateCache('pembayaran'); loadPiutangList(); }

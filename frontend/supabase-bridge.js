@@ -855,7 +855,18 @@ bridge._actions['getPiutang'] = async () => {
 
 bridge._actions['getAgingPiutang'] = async () => {
   const { data } = await _supabase.from('receivables').select('*, customers(*), sales(*)');
-  return ok(data);
+  var result = { '0-30': 0, '31-60': 0, '61-90': 0, '>90': 0, total: 0 };
+  (data || []).filter(function(p){ return p.status !== 'PAID'; }).forEach(function(p){
+    var days = p.due_date ? Math.floor((new Date() - new Date(p.due_date)) / (1000 * 60 * 60 * 24)) : 0;
+    var sisa = p.remaining || 0;
+    if (days <= 0) return;
+    if (days <= 30) result['0-30'] += sisa;
+    else if (days <= 60) result['31-60'] += sisa;
+    else if (days <= 90) result['61-90'] += sisa;
+    else result['>90'] += sisa;
+    result.total += sisa;
+  });
+  return ok(result);
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -864,17 +875,27 @@ bridge._actions['getAgingPiutang'] = async () => {
 
 bridge._actions['createPembayaran'] = async (params) => {
   const d = params.data || params;
-  const { data, error } = await _supabase.from('payments').insert({
-    invoice_id: d.invoice_id,
-    customer_id: d.customer_id,
-    sales_id: d.sales_id,
+  if (!d.piutang_id) return fail('piutang_id diperlukan');
+  var { data: recv, error: recvErr } = await _supabase.from('receivables').select('*').eq('id', d.piutang_id).single();
+  if (recvErr) return fail('Data piutang tidak ditemukan: ' + recvErr.message);
+  var newRemaining = (recv.remaining || 0) - (d.amount || 0);
+  if (newRemaining < 0) return fail('Jumlah bayar melebihi sisa piutang');
+  var { data: payment, error: payErr } = await _supabase.from('payments').insert({
+    invoice_id: recv.invoice_id,
+    customer_id: recv.customer_id,
+    sales_id: recv.sales_id,
     amount: d.amount,
     method: d.metode,
     notes: d.notes,
     payment_date: new Date().toISOString(),
   }).select().single();
-  if (error) return fail(error.message);
-  return ok(data, 'Pembayaran berhasil');
+  if (payErr) return fail(payErr.message);
+  var newStatus = newRemaining <= 0 ? 'PAID' : 'PARTIAL';
+  await _supabase.from('receivables').update({ remaining: newRemaining, status: newStatus }).eq('id', d.piutang_id);
+  if (newStatus === 'PAID' && recv.invoice_id) {
+    await _supabase.from('invoices').update({ status: 'PAID' }).eq('id', recv.invoice_id);
+  }
+  return ok(payment, 'Pembayaran berhasil');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1068,25 +1089,26 @@ bridge._actions['getSalesDashboard'] = async () => {
   const profile = await getCurrentProfile();
   var today = new Date().toISOString().substring(0, 10);
   var monthStart = today.substring(0, 7) + '-01';
+  if (!profile.sales_id) return fail('Sales ID tidak ditemukan. Hubungi owner untuk setup akun.');
   var [visits, customers, invoices, monthInv, receivables, konsinyasi, komisi] = await Promise.all([
-    _supabase.from('visits').select('*', { count: 'exact', head: true }).eq('sales_id', profile.sales_id),
-    _supabase.from('customers').select('*').eq('sales_id', profile.sales_id),
+    _supabase.from('visits').select('*', { count: 'exact' }).eq('sales_id', profile.sales_id),
+    _supabase.from('customers').select('*', { count: 'exact', head: true }).eq('sales_id', profile.sales_id),
     _supabase.from('invoices').select('*').eq('sales_id', profile.sales_id),
     _supabase.from('invoices').select('total').eq('sales_id', profile.sales_id).eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
-    _supabase.from('receivables').select('remaining, invoices!inner(customer_id, sales_id)').eq('invoices.sales_id', profile.sales_id),
+    _supabase.from('receivables').select('remaining').eq('sales_id', profile.sales_id),
     _supabase.from('consignment_stock').select('qty_remaining').eq('sales_id', profile.sales_id),
     _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id).gte('created_at', monthStart),
   ]);
 
   var omzet = (monthInv.data || []).reduce(function(s, i){ return s + (i.total || 0); }, 0);
-  var piutang = (receivables.data || []).reduce(function(s, r){ return s + (r.remaining_amount || 0); }, 0);
+  var piutang = (receivables.data || []).reduce(function(s, r){ return s + (r.remaining || 0); }, 0);
   var stok = (konsinyasi.data || []).reduce(function(s, k){ return s + (k.qty_remaining || 0); }, 0);
   var komisiReady = (komisi.data || []).filter(function(c){ return c.status === 'READY' || c.status === 'UNPAID'; }).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var komisiPaid = (komisi.data || []).filter(function(c){ return c.status === 'PAID'; }).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
   var unpaid = (invoices.data || []).filter(function(i){ return i.status === 'UNPAID' || i.status === 'OVERDUE'; }).length;
   var todayVisits = (visits.data || []).filter(function(v){ return (v.visit_date || '').substring(0, 10) === today; });
 
-  var profileData = await _supabase.from('sales').select('target_bulanan').eq('id', profile.sales_id).single();
+  var { data: profileData } = await _supabase.from('sales').select('target_bulanan').eq('id', profile.sales_id).maybeSingle();
   var pencapaian = omzet;
 
   return ok({
@@ -1487,7 +1509,7 @@ bridge._actions['getStockPredictions'] = async () => {
   var predictions = (stocks || []).map(function(s) {
     var dailyAvg = s.qty_sold || 0;
     var daysLeft = dailyAvg > 0 ? Math.floor((s.qty_remaining || 0) / dailyAvg) : 99;
-    var status = daysLeft <= 7 ? 'HABIS' : daysLeft <= 14 ? 'SEGARA' : 'AMAN';
+    var status = daysLeft <= 7 ? 'kritis' : daysLeft <= 14 ? 'warning' : 'aman';
     return { stock_id: s.id, customer_id: s.customer_id, store_name: s.customers?.store_name || '', produk_id: s.product_id, produk_name: s.products?.name || '', qty_sisa: s.qty_remaining || 0, daily_avg_sales: dailyAvg, estimated_days_left: daysLeft, status: status };
   });
   return ok(predictions);
