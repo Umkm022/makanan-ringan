@@ -1008,10 +1008,11 @@ bridge._actions['createSales'] = async (params) => {
 bridge._actions['createSalesAuth'] = async (params) => {
   const d = params.data || params;
   if (!d.sales_id || !d.username || !d.password) return fail('sales_id, username, password wajib');
-  var { data: salesData, error: salesErr } = await _supabase.from('sales').select('*, users!inner(*)').eq('id', d.sales_id).maybeSingle();
+  var { data: salesData, error: salesErr } = await _supabase.from('sales').select('*').eq('id', d.sales_id).maybeSingle();
   if (salesErr) return fail(salesErr.message);
   if (!salesData) return fail('Sales tidak ditemukan');
-  if (salesData.users) return fail('Sales sudah memiliki akun login');
+  var { data: existingUser } = await _supabase.from('users').select('id').eq('sales_id', d.sales_id).maybeSingle();
+  if (existingUser) return fail('Sales sudah memiliki akun login');
   var { data: dup } = await _supabase.from('users').select('id').eq('username', d.username).maybeSingle();
   if (dup) return fail('Username sudah digunakan');
   if (!_supabaseAdmin) return fail('Service role not configured');
