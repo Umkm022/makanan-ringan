@@ -835,6 +835,126 @@ bridge._actions['deleteStokKonsinyasi'] = async (params) => {
   return ok(null, 'Stok konsinyasi berhasil dihapus');
 };
 
+bridge._actions['getKpiSummary'] = async (params) => {
+  function _f(n){ return Math.round(n || 0).toLocaleString('id-ID'); }
+  var d = params.data || params;
+  var profile = await getCurrentProfile();
+  var type = d.type || 'piutang';
+  var today = new Date().toISOString().substring(0, 10);
+  var monthStart = today.substring(0, 7) + '-01';
+
+  if (type === 'piutang') {
+    var q = _supabase.from('receivables').select('*, customers(store_name)');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var rows = [], total = 0;
+    (data || []).filter(function(r){ return r.status !== 'PAID'; }).forEach(function(r){
+      rows.push([(r.customers?.store_name || r.customer_id || '-'), 'Rp ' + _f(r.remaining || 0)]);
+      total += (r.remaining || 0);
+    });
+    return ok({ headers: ['Customer', 'Sisa'], rows: rows, total: total });
+  }
+
+  if (type === 'omzet-bulan') {
+    var q = _supabase.from('invoices').select('invoice_date, total, customers(store_name)').eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today);
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q.order('invoice_date', { ascending: false });
+    var rows = [], total = 0;
+    (data || []).forEach(function(i){
+      rows.push([(i.invoice_date || '').substring(0, 10), i.customers?.store_name || '-', 'Rp ' + _f(i.total || 0)]);
+      total += (i.total || 0);
+    });
+    return ok({ headers: ['Tanggal', 'Customer', 'Total'], rows: rows, total: total });
+  }
+
+  if (type === 'omzet-hari') {
+    var q = _supabase.from('invoices').select('invoice_date, total, customers(store_name)').eq('status', 'PAID').gte('invoice_date', today).lte('invoice_date', today);
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q.order('created_at', { ascending: false });
+    var rows = [], total = 0;
+    (data || []).forEach(function(i){
+      rows.push([i.customers?.store_name || '-', 'Rp ' + _f(i.total || 0)]);
+      total += (i.total || 0);
+    });
+    return ok({ headers: ['Customer', 'Total'], rows: rows, total: total });
+  }
+
+  if (type === 'toko-aktif') {
+    var q = _supabase.from('customers').select('store_name, kota, status, visit_count, total_omzet');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var rows = [], total = 0;
+    (data || []).forEach(function(c){
+      rows.push([c.store_name || '-', c.kota || '-', c.visit_count || 0, 'Rp ' + _f(c.total_omzet || 0)]);
+      total++;
+    });
+    return ok({ headers: ['Nama Toko', 'Kota', 'Kunjungan', 'Total Omzet'], rows: rows, total: total });
+  }
+
+  if (type === 'kunjungan') {
+    var q = _supabase.from('visits').select('visit_date, customers(store_name)');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var rows = [];
+    (data || []).filter(function(v){ return (v.visit_date || '').substring(0, 10) === today; }).forEach(function(v){
+      rows.push([(v.visit_date || '').substring(0, 10), v.customers?.store_name || '-']);
+    });
+    return ok({ headers: ['Tanggal', 'Toko'], rows: rows });
+  }
+
+  if (type === 'komisi-ready' || type === 'komisi-paid') {
+    var st = type === 'komisi-paid' ? 'PAID' : 'READY,UNPAID';
+    var q = _supabase.from('commissions').select('amount, status, created_at, customers(store_name)');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var statuses = st.split(',');
+    var rows = [], total = 0;
+    (data || []).filter(function(c){ return statuses.indexOf(c.status) >= 0; }).forEach(function(c){
+      rows.push([c.customers?.store_name || '-', 'Rp ' + _f(c.amount || 0), c.status]);
+      total += (c.amount || 0);
+    });
+    return ok({ headers: ['Customer', 'Jumlah', 'Status'], rows: rows, total: total });
+  }
+
+  if (type === 'invoice-baru') {
+    var q = _supabase.from('invoices').select('invoice_date, total, customers(store_name)');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var rows = [], total = 0;
+    (data || []).filter(function(i){ return i.status === 'UNPAID' || i.status === 'OVERDUE'; }).forEach(function(i){
+      rows.push([(i.invoice_date || '').substring(0, 10), i.customers?.store_name || '-', 'Rp ' + _f(i.total || 0)]);
+      total += (i.total || 0);
+    });
+    return ok({ headers: ['Tanggal', 'Customer', 'Total'], rows: rows, total: total });
+  }
+
+  if (type === 'komisi') {
+    var q = _supabase.from('commissions').select('amount, status, created_at, customers(store_name)');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var rows = [], total = 0;
+    (data || []).forEach(function(c){
+      rows.push([(c.created_at || '').substring(0, 10), c.customers?.store_name || '-', 'Rp ' + _f(c.amount || 0), c.status]);
+      total += (c.amount || 0);
+    });
+    return ok({ headers: ['Tanggal', 'Customer', 'Jumlah', 'Status'], rows: rows, total: total });
+  }
+
+  if (type === 'laba-kotor' || type === 'laba-bersih') {
+    var q = _supabase.from('invoices').select('invoice_date, total, customers(store_name)').eq('status', 'PAID');
+    if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
+    var { data } = await q;
+    var rows = [], total = 0;
+    (data || []).forEach(function(i){
+      rows.push([(i.invoice_date || '').substring(0, 10), i.customers?.store_name || '-', 'Rp ' + _f(i.total || 0)]);
+      total += (i.total || 0);
+    });
+    return ok({ headers: ['Tanggal', 'Customer', 'Total'], rows: rows, total: total });
+  }
+
+  return fail('Tipe KPI tidak dikenal: ' + type);
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // INVOICE / PIUTANG ACTIONS
 // ═══════════════════════════════════════════════════════════════════
