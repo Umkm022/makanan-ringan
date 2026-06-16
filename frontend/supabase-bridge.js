@@ -365,6 +365,7 @@ bridge._actions['createCustomer'] = async (params) => {
 
 bridge._actions['updateCustomer'] = async (params) => {
   const d = params.data || params;
+  const id = d.id || params.id;
   const { data, error } = await _supabase.from('customers').update({
     store_name: d.store_name,
     owner_name: d.owner_name,
@@ -378,7 +379,7 @@ bridge._actions['updateCustomer'] = async (params) => {
     notes: d.notes,
     latitude: d.latitude || null,
     longitude: d.longitude || null,
-  }).eq('id', d.id).select().single();
+  }).eq('id', id).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Customer berhasil diupdate');
 };
