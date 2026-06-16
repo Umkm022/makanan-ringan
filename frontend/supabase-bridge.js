@@ -805,6 +805,9 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
       if (remaining > 0) {
         await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, remaining: remaining, status: paymentAmount > 0 ? 'PARTIAL' : 'OPEN', invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() });
       }
+      if (invStatus === 'PAID') {
+        hitungKomisi(inv.id);
+      }
     }
   }
   await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', visit.id);
@@ -1131,6 +1134,7 @@ bridge._actions['createPembayaran'] = async (params) => {
   await _supabase.from('receivables').update({ remaining: newRemaining, status: newStatus }).eq('id', d.piutang_id);
   if (newStatus === 'PAID' && recv.invoice_id) {
     await _supabase.from('invoices').update({ status: 'PAID' }).eq('id', recv.invoice_id);
+    hitungKomisi(recv.invoice_id);
   }
   return ok(payment, 'Pembayaran berhasil');
 };
@@ -1196,6 +1200,32 @@ bridge._actions['konfirmasiSetoran'] = async (params) => {
 // COMMISSION ACTIONS
 // ═══════════════════════════════════════════════════════════════════
 
+async function hitungKomisi(invoiceId) {
+  var { data: inv, error: invErr } = await _supabase.from('invoices').select('*, sales(*)').eq('id', invoiceId).single();
+  if (invErr || !inv) return;
+  if (inv.status !== 'PAID') return;
+  var { data: dup } = await _supabase.from('commissions').select('id').eq('invoice_id', invoiceId);
+  if (dup && dup.length > 0) return;
+  var rate = inv.sales?.komisi_rate;
+  if (!rate) {
+    var { data: setting } = await _supabase.from('settings').select('value').eq('key', 'komisi_rate_default').maybeSingle();
+    rate = setting ? parseFloat(setting.value) : 5;
+  }
+  var amount = Math.round(inv.total * rate / 100);
+  var d = new Date(inv.invoice_date || inv.created_at);
+  await _supabase.from('commissions').insert({
+    sales_id: inv.sales_id,
+    invoice_id: inv.id,
+    customer_id: inv.customer_id,
+    total_invoice: inv.total,
+    rate: rate,
+    amount: amount,
+    period_month: d.getMonth() + 1,
+    period_year: d.getFullYear(),
+    status: 'READY',
+  });
+}
+
 bridge._actions['getKomisi'] = async (params) => {
   const d = params?.data || params;
   let query = _supabase.from('commissions').select('*, customers(*), sales(*), invoices(*)');
@@ -1205,10 +1235,13 @@ bridge._actions['getKomisi'] = async (params) => {
 };
 
 bridge._actions['cairkanKomisi'] = async (params) => {
+  const d = params?.data || params;
+  var ids = d.komisiIds || (d.id ? [d.id] : []);
+  if (ids.length === 0) return fail('ID komisi tidak ditemukan');
   const { data, error } = await _supabase.from('commissions').update({
     status: 'PAID',
     paid_date: new Date().toISOString(),
-  }).eq('id', params.id).select().single();
+  }).in('id', ids).select();
   if (error) return fail(error.message);
   return ok(data, 'Komisi berhasil dicairkan');
 };
