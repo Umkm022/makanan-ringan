@@ -117,10 +117,13 @@ function dataUrlToBlob(dataUrl) {
 }
 function parseCustomerNotes(notes) {
   if (!notes) return { photo: null, text: notes || '' };
-  var m = notes.match(/^__CUSTPHOTO__:(.+?)\|\|(.+)/);
-  if (m) return { photo: m[1], text: m[2] };
-  var m2 = notes.match(/^__CUSTPHOTO__:(.+)$/);
-  if (m2) return { photo: m2[1], text: '' };
+  var idx = notes.indexOf('__CUSTPHOTO__:');
+  if (idx === 0) {
+    var after = notes.slice('__CUSTPHOTO__:'.length);
+    var sep = after.indexOf('||');
+    if (sep >= 0) return { photo: after.slice(0, sep), text: after.slice(sep + 2) };
+    return { photo: after, text: '' };
+  }
   return { photo: null, text: notes };
 }
 function customerPhotoUrl(path) {
@@ -420,7 +423,7 @@ bridge._actions['uploadCustomerPhoto'] = async (params) => {
     // Store reference in notes field
     var { data: cust } = await _supabase.from('customers').select('notes').eq('id', d.customerId).single();
     var pn = parseCustomerNotes(cust?.notes || '');
-    var newNotes = '__CUSTPHOTO__:' + path + '||' + (pn.text || '');
+    var newNotes = '__CUSTPHOTO__:' + path + (pn.text ? '||' + pn.text : '');
     await _supabase.from('customers').update({ notes: newNotes }).eq('id', d.customerId);
     return ok(path, 'Foto berhasil diupload');
   } catch(e) { return fail(e.message || 'Gagal upload foto'); }
