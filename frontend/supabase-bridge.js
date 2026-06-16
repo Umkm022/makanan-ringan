@@ -106,6 +106,27 @@ function mapFields(obj, mapping) {
   }
   return r;
 }
+function dataUrlToBlob(dataUrl) {
+  var parts = dataUrl.split(',');
+  var mime = parts[0].match(/:(.*?);/)[1];
+  var bstr = atob(parts[1]);
+  var n = bstr.length;
+  var u8arr = new Uint8Array(n);
+  while (n--) { u8arr[n] = bstr.charCodeAt(n); }
+  return new Blob([u8arr], { type: mime });
+}
+function parseCustomerNotes(notes) {
+  if (!notes) return { photo: null, text: notes || '' };
+  var m = notes.match(/^__CUSTPHOTO__:(.+?)\|\|(.+)/);
+  if (m) return { photo: m[1], text: m[2] };
+  var m2 = notes.match(/^__CUSTPHOTO__:(.+)$/);
+  if (m2) return { photo: m2[1], text: '' };
+  return { photo: null, text: notes };
+}
+function customerPhotoUrl(path) {
+  if (!path) return null;
+  return SUPABASE_URL + '/storage/v1/object/public/customer-photos/' + path;
+}
 
 const productMap = {
   produk_id: 'id', kode_produk: 'code', nama_produk: 'name',
@@ -155,8 +176,15 @@ const consignmentMap = {
 // ── Helper: get user session ───────────────────────────────────────
 async function requireAuth() {
   const { data: { session } } = await _supabase.auth.getSession();
-  if (!session) throw new Error('Not authenticated');
-  return session;
+  if (session) return session;
+  // Fallback: session not in memory, try to restore from storage
+  var savedToken = sessionStorage.getItem('seblak_token');
+  var savedRefresh = sessionStorage.getItem('seblak_refresh');
+  if (savedToken && savedRefresh) {
+    var { data, error } = await _supabase.auth.setSession({ access_token: savedToken, refresh_token: savedRefresh });
+    if (!error && data.session) return data.session;
+  }
+  throw new Error('Not authenticated');
 }
 
 // ── Helper: get current user with profile ──────────────────────────
@@ -209,6 +237,7 @@ async function _handleAuthLogin(username, password) {
     message: 'Login berhasil',
     data: {
       token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
       user: {
         user_id: users.id, // UUID
         username: users.username,
@@ -286,10 +315,15 @@ async function _handleValidateSession(token) {
 // ═══════════════════════════════════════════════════════════════════
 
 bridge._actions['getCustomers'] = async () => {
-  const { data } = await _supabase.from('customers').select('*, sales(full_name)');
+  const profile = await getCurrentProfile();
+  var q = _supabase.from('customers').select('*, sales(full_name)');
+  if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
+  const { data } = await q;
   const mapped = (data || []).map(c => {
     const m = mapFields(c, customerMap);
     m.sales_name = c.sales ? c.sales.full_name : null;
+    const pn = parseCustomerNotes(m.notes || '');
+    if (pn.photo) m.store_photo = customerPhotoUrl(pn.photo);
     return m;
   });
   return ok(mapped);
@@ -300,6 +334,8 @@ bridge._actions['getCustomer'] = async (params) => {
   if (data) {
     const m = mapFields(data, customerMap);
     m.sales_name = data.sales ? data.sales.full_name : null;
+    const pn = parseCustomerNotes(m.notes || '');
+    if (pn.photo) m.store_photo = customerPhotoUrl(pn.photo);
     return ok(m);
   }
   return ok(null);
@@ -320,6 +356,8 @@ bridge._actions['createCustomer'] = async (params) => {
     credit_limit: d.limit_piutang || 0,
     payment_term: d.tempo_pembayaran || 30,
     notes: d.notes,
+    latitude: d.latitude || null,
+    longitude: d.longitude || null,
   }).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Customer berhasil dibuat');
@@ -338,15 +376,53 @@ bridge._actions['updateCustomer'] = async (params) => {
     credit_limit: d.limit_piutang,
     payment_term: d.tempo_pembayaran,
     notes: d.notes,
+    latitude: d.latitude || null,
+    longitude: d.longitude || null,
   }).eq('id', d.id).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Customer berhasil diupdate');
 };
 
 bridge._actions['deleteCustomer'] = async (params) => {
+  // Clean up photo from storage first
+  try {
+    const client = _supabaseAdmin || _supabase;
+    const { data: files } = await client.storage.from('customer-photos').list({ search: params.id });
+    if (files?.length) await client.storage.from('customer-photos').remove(files.map(f => f.name));
+  } catch(e) { /* ignore storage errors */ }
   const { error } = await _supabase.from('customers').delete().eq('id', params.id);
   if (error) return fail(error.message);
   return ok(null, 'Customer berhasil dihapus');
+};
+
+bridge._actions['ensureCustomerPhotoBucket'] = async () => {
+  try {
+    const client = _supabaseAdmin || _supabase;
+    const { data: buckets } = await client.storage.listBuckets();
+    if (!buckets?.find(b => b.name === 'customer-photos')) {
+      const admin = _supabaseAdmin;
+      if (admin) await admin.storage.createBucket('customer-photos', { public: true });
+    }
+  } catch(e) { /* ignore */ }
+  return ok(null, 'OK');
+};
+
+bridge._actions['uploadCustomerPhoto'] = async (params) => {
+  const d = params.data || params;
+  if (!d.customerId || !d.dataUrl) return fail('Parameter kurang');
+  try {
+    var ext = d.dataUrl.includes('png') ? 'png' : 'jpg';
+    var path = d.customerId + '.' + ext;
+    var blob = dataUrlToBlob(d.dataUrl);
+    var client = _supabaseAdmin || _supabase;
+    await client.storage.from('customer-photos').upload(path, blob, { upsert: true, contentType: 'image/' + ext });
+    // Store reference in notes field
+    var { data: cust } = await _supabase.from('customers').select('notes').eq('id', d.customerId).single();
+    var pn = parseCustomerNotes(cust?.notes || '');
+    var newNotes = '__CUSTPHOTO__:' + path + '||' + (pn.text || '');
+    await _supabase.from('customers').update({ notes: newNotes }).eq('id', d.customerId);
+    return ok(path, 'Foto berhasil diupload');
+  } catch(e) { return fail(e.message || 'Gagal upload foto'); }
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -611,8 +687,11 @@ bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
 bridge._actions['getDraftKunjungan'] = async () => {
   const profile = await getCurrentProfile();
   if (!profile.sales_id) return ok([]);
-  const { data } = await _supabase.from('visits').select('*, customers(store_name)').eq('sales_id', profile.sales_id).eq('status', 'DRAFT').order('created_at', { ascending: false });
-  return ok((data || []).map(function(v){ return mapFields(v, visitMap); }));
+  const { data } = await _supabase.from('visits').select('id, customer_id, status, visit_date, start_time, customers(store_name)').eq('sales_id', profile.sales_id).eq('status', 'DRAFT').order('created_at', { ascending: false }).limit(20);
+  return ok((data || []).map(function(v){
+    var c = v.customers || {};
+    return { kunjungan_id: v.id, customer_id: v.customer_id, customer_nama: c.store_name || v.customer_id, status: v.status, tanggal: v.visit_date, jam_mulai: v.start_time };
+  }));
 };
 
 bridge._actions['startKunjungan'] = async (params) => {
@@ -681,6 +760,8 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   if (visit.status !== 'DRAFT') return fail('Kunjungan sudah difinalisasi');
   var customerId = visit.customer_id, salesId = visit.sales_id, invoiceTotal = visit.total_invoice || 0;
   const { data: details } = await _supabase.from('visit_details').select('*').eq('visit_id', visit.id);
+  var paymentAmount = parseInt(d.paymentAmount) || 0;
+  var paymentMethod = d.paymentMethod || 'TUNAI';
   for (var vd of details || []) {
     if (vd.sold > 0 || vd.damaged > 0 || vd.returned > 0) {
       var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('product_id', vd.product_id).single();
@@ -694,13 +775,14 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
       else { await _supabase.from('warehouse_stock').insert({ product_id: vd.product_id, qty_in: vd.returned, qty_out: 0, qty_remaining: vd.returned, unit: 'PCS' }); }
     }
   }
-  var invoiceId = null;
+  var invoiceId = null, paymentId = null;
   if (invoiceTotal > 0) {
     var tempo = 30;
     var { data: cust } = await _supabase.from('customers').select('payment_term').eq('id', customerId).single();
     if (cust?.payment_term) tempo = parseInt(cust.payment_term) || 30;
     var jatuhTempo = new Date(); jatuhTempo.setDate(jatuhTempo.getDate() + tempo);
-    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status: 'OPEN', invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() }).select().single();
+    var invStatus = paymentAmount >= invoiceTotal ? 'PAID' : 'OPEN';
+    var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status: invStatus, invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() }).select().single();
     if (!invErr && inv) {
       invoiceId = inv.id;
       for (var dd of details || []) {
@@ -710,16 +792,20 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
           await _supabase.from('invoice_details').insert({ invoice_id: inv.id, product_id: dd.product_id, qty: dd.sold, price: dd.price, subtotal: dd.subtotal, hpp: hpp, profit: dd.subtotal - (dd.sold * hpp) });
         }
       }
-      await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, remaining: invoiceTotal, status: 'OPEN', invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() });
+      if (paymentAmount > 0) {
+        var remainingAfter = Math.max(0, invoiceTotal - paymentAmount);
+        var { data: pay } = await _supabase.from('payments').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, amount: paymentAmount, method: paymentMethod, remaining_after: remainingAfter, payment_date: new Date().toISOString(), status: 'VALID' }).select().single();
+        if (pay) paymentId = pay.id;
+      }
+      var remaining = Math.max(0, invoiceTotal - paymentAmount);
+      if (remaining > 0) {
+        await _supabase.from('receivables').insert({ invoice_id: inv.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, remaining: remaining, status: paymentAmount > 0 ? 'PARTIAL' : 'OPEN', invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() });
+      }
     }
   }
   await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', visit.id);
-  var { data: allProduk } = await _supabase.from('products').select('*');
-  var restockItems = (details || []).filter(function(dd) { return dd.restock_recommendation > 0; }).map(function(dd) {
-    var pr = (allProduk || []).filter(function(p) { return p.id === dd.product_id; })[0] || {};
-    return { produk_id: dd.product_id, produk_nama: pr.name || dd.product_id, qty: dd.restock_recommendation };
-  });
-  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, has_restock_recommendation: restockItems.length > 0, restock_items: restockItems }, 'Kunjungan berhasil difinalisasi');
+  await _supabase.from('customers').update({ last_visit: new Date().toISOString() }).eq('id', customerId);
+  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount }, 'Kunjungan berhasil difinalisasi');
 };
 
 bridge._actions['cancelKunjungan'] = async (params) => {
@@ -1032,9 +1118,9 @@ bridge._actions['createPembayaran'] = async (params) => {
     sales_id: recv.sales_id,
     amount: d.amount,
     method: d.metode,
-    notes: d.notes,
+    remaining_after: newRemaining,
     payment_date: new Date().toISOString(),
-    status_penyetoran: 'BELUM_DISETOR',
+    status: 'VALID',
   }).select().single();
   if (payErr) return fail(payErr.message);
   var newStatus = newRemaining <= 0 ? 'PAID' : 'PARTIAL';
@@ -1048,12 +1134,25 @@ bridge._actions['createPembayaran'] = async (params) => {
 bridge._actions['setorPembayaran'] = async (params) => {
   const d = params?.data || params;
   if (!d.pembayaran_id) return fail('pembayaran_id diperlukan');
-  const { data, error } = await _supabase.from('payments').update({
-    status_penyetoran: 'SUDAH_DISETOR',
-    tanggal_penyetoran: new Date().toISOString(),
-  }).eq('id', d.pembayaran_id).select().single();
+  const { data: payment, error } = await _supabase.from('payments').update({
+    status: 'MENUNGGU',
+  }).eq('id', d.pembayaran_id).select('*, customers(store_name)').single();
   if (error) return fail(error.message);
-  return ok(data, 'Penyetoran berhasil');
+  const { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+  if (owners && owners.length > 0) {
+    var namaToko = payment?.customers?.store_name || 'Sales';
+    var jumlah = payment?.amount || 0;
+    for (var o of owners) {
+      await _supabase.from('notifications').insert({
+        user_id: o.id, tipe: 'SETORAN',
+        judul: '💰 Setoran Baru',
+        pesan: 'Setoran dari ' + namaToko + ': Rp ' + jumlah,
+        link: '?page=invoice&view=setor',
+        is_read: false, created_at: new Date(),
+      });
+    }
+  }
+  return ok(payment, 'Pembayaran menunggu konfirmasi owner');
 };
 
 bridge._actions['getPembayaranSales'] = async (params) => {
@@ -1062,6 +1161,9 @@ bridge._actions['getPembayaranSales'] = async (params) => {
   const { data } = await _supabase.from('payments').select('*, customers(*)').eq('sales_id', profile.sales_id).order('created_at', { ascending: false });
   const result = (data || []).map(function(p) {
     const c = p.customers || {};
+    var st = 'BELUM_DISETOR';
+    if (p.status === 'MENUNGGU') st = 'MENUNGGU';
+    else if (p.status === 'DIKONFIRMASI') st = 'SUDAH_DISETOR';
     return {
       pembayaran_id: p.id,
       invoice_id: p.invoice_id,
@@ -1069,11 +1171,21 @@ bridge._actions['getPembayaranSales'] = async (params) => {
       jumlah_bayar: p.amount || 0,
       metode_bayar: p.method || '',
       tanggal: p.payment_date || p.created_at || '',
-      status_penyetoran: p.status_penyetoran || 'BELUM_DISETOR',
-      tanggal_penyetoran: p.tanggal_penyetoran || null,
+      status_penyetoran: st,
+      tanggal_penyetoran: st === 'SUDAH_DISETOR' ? (p.updated_at || null) : null,
     };
   });
   return ok(result);
+};
+
+bridge._actions['konfirmasiSetoran'] = async (params) => {
+  const d = params?.data || params;
+  if (!d.pembayaran_id) return fail('pembayaran_id diperlukan');
+  const { data, error } = await _supabase.from('payments').update({
+    status: 'DIKONFIRMASI',
+  }).eq('id', d.pembayaran_id).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Setoran dikonfirmasi');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1502,6 +1614,9 @@ bridge._actions['generateReport'] = async (params) => {
       const { data } = await q;
       const result = (data || []).map(function(p) {
         const c = p.customers || {};
+        var st = 'BELUM_DISETOR';
+        if (p.status === 'MENUNGGU') st = 'MENUNGGU';
+        else if (p.status === 'DIKONFIRMASI') st = 'SUDAH_DISETOR';
         return {
           pembayaran_id: p.id,
           customer_nama: c.store_name || c.name || p.customer_id,
@@ -1509,7 +1624,7 @@ bridge._actions['generateReport'] = async (params) => {
           metode_bayar: p.method || '',
           tanggal: p.payment_date || p.created_at || '',
           sales_id: p.sales_id || '',
-          status_penyetoran: p.status_penyetoran || 'BELUM_DISETOR',
+          status_penyetoran: st,
         };
       });
       return ok(result);
@@ -1720,16 +1835,32 @@ bridge._actions['getNotifikasi'] = async (params) => {
   var q = _supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(20);
   if (d && d.userId) q = q.eq('user_id', d.userId);
   const { data } = await q;
-  return ok(data || []);
+  var mapped = (data || []).map(function(n) {
+    return {
+      notifikasi_id: n.id,
+      tipe: n.tipe, judul: n.judul, pesan: n.pesan, link: n.link,
+      is_read: n.is_read, created_at: n.created_at,
+    };
+  });
+  return ok(mapped);
 };
 bridge._actions['getVisitReminders'] = async () => {
   const profile = await getCurrentProfile();
-  var q = _supabase.from('customers').select('*');
+  var q = _supabase.from('customers').select('id, store_name, latitude, longitude, sales_id');
   if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
   const { data: customers } = await q;
+  var cIds = (customers || []).map(function(c){ return c.id; });
+  var visits = [];
+  if (cIds.length) {
+    var { data: v } = await _supabase.from('visits').select('customer_id, visit_date').eq('status', 'COMPLETED').in('customer_id', cIds).order('visit_date', { ascending: false });
+    visits = v || [];
+  }
+  var lastVisitMap = {};
+  (visits || []).forEach(function(v){ if (!lastVisitMap[v.customer_id]) lastVisitMap[v.customer_id] = v.visit_date; });
   var reminders = (customers || []).map(function(c) {
     var daysSince = 999;
-    if (c.last_visit) daysSince = Math.floor((Date.now() - new Date(c.last_visit).getTime()) / 86400000);
+    var lastVisit = lastVisitMap[c.id];
+    if (lastVisit) daysSince = Math.floor((Date.now() - new Date(lastVisit).getTime()) / 86400000);
     var urgency = daysSince > 30 ? 'red' : daysSince > 14 ? 'yellow' : 'green';
     return { customer_id: c.id, store_name: c.store_name || c.nama, days_since_last_visit: daysSince, urgency: urgency, lat: c.latitude, lng: c.longitude };
   });
@@ -1874,8 +2005,16 @@ bridge._actions['getNotifications'] = async () => {
 };
 
 bridge._actions['markNotifRead'] = async (params) => {
-  await _supabase.from('notifications').update({ is_read: true }).eq('id', params.id);
+  await _supabase.from('notifications').update({ is_read: true }).eq('id', params.notifId || params.id);
   return ok(null, 'Notifikasi dibaca');
+};
+
+bridge._actions['getOwnerNotifBadge'] = async () => {
+  const profile = await getCurrentProfile();
+  const { data: notifs } = await _supabase.from('notifications').select('id').eq('user_id', profile.id).eq('is_read', false);
+  const { data: pending } = await _supabase.from('payments').select('id').eq('status', 'MENUNGGU');
+  var total = (notifs || []).length + (pending || []).length;
+  return ok({ total: total, unread_notif: (notifs || []).length, pending_setoran: (pending || []).length });
 };
 
 bridge._actions['requestTitipAwal'] = async (params) => {
@@ -1981,6 +2120,11 @@ bridge._actions['fulfillTitipRequest'] = async (params) => {
 
   google.script.run = createRunProxy();
 })();
+
+// Init customer photo bucket on load
+setTimeout(function() {
+  bridge._actions['ensureCustomerPhotoBucket']().catch(function(){});
+}, 1000);
 
 // window.api NOT overridden here — the build script replaces
 // google.script.run calls in the main api() function with

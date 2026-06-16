@@ -24,6 +24,7 @@ window.doLogin = async function doLogin() {
     const result = await bridge.direct('authenticate', username, password);
     if (result.success) {
       sessionStorage.setItem('seblak_token', result.data.token);
+      if (result.data.refresh_token) sessionStorage.setItem('seblak_refresh', result.data.refresh_token);
       sessionStorage.setItem('seblak_user', JSON.stringify(result.data.user));
       if (typeof redirectByRole === 'function') {
         redirectByRole(result.data.user.role);
@@ -136,6 +137,7 @@ window.goSetup = function goSetup() {
 
         if (profile) {
           sessionStorage.setItem('seblak_token', session.access_token);
+          if (session.refresh_token) sessionStorage.setItem('seblak_refresh', session.refresh_token);
           sessionStorage.setItem('seblak_user', JSON.stringify({
             user_id: profile.id,
             username: profile.username,
