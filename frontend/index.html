@@ -2368,23 +2368,47 @@ bridge._actions['getNotifikasi'] = async (params) => {
 };
 bridge._actions['getVisitReminders'] = async () => {
   const profile = await getCurrentProfile();
-  var q = _supabase.from('customers').select('id, store_name, latitude, longitude, sales_id');
+  var q = _supabase.from('customers').select('id, store_name, address, latitude, longitude, sales_id, status');
   if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
-  const { data: customers } = await q;
-  var cIds = (customers || []).map(function(c){ return c.id; });
+  const { data: raw } = await q;
+  var customers = (raw || []).filter(function(c){ return c.status !== 'NONAKTIF' && c.status !== 'SUSPEND'; });
+
+  var salesIds = [...new Set(customers.map(function(c){ return c.sales_id; }).filter(Boolean))];
+  var salesMap = {};
+  if (salesIds.length) {
+    var { data: sales } = await _supabase.from('sales').select('id, full_name, nama').in('id', salesIds);
+    (sales || []).forEach(function(s){ salesMap[s.id] = s.full_name || s.nama || ''; });
+  }
+
+  var cIds = customers.map(function(c){ return c.id; });
   var visits = [];
   if (cIds.length) {
     var { data: v } = await _supabase.from('visits').select('customer_id, visit_date').eq('status', 'COMPLETED').in('customer_id', cIds).order('visit_date', { ascending: false });
     visits = v || [];
   }
   var lastVisitMap = {};
-  (visits || []).forEach(function(v){ if (!lastVisitMap[v.customer_id]) lastVisitMap[v.customer_id] = v.visit_date; });
-  var reminders = (customers || []).map(function(c) {
+  var visitCountMap = {};
+  (visits || []).forEach(function(v){
+    if (!lastVisitMap[v.customer_id]) lastVisitMap[v.customer_id] = v.visit_date;
+    visitCountMap[v.customer_id] = (visitCountMap[v.customer_id] || 0) + 1;
+  });
+  var reminders = customers.map(function(c) {
     var daysSince = 999;
     var lastVisit = lastVisitMap[c.id];
     if (lastVisit) daysSince = Math.floor((Date.now() - new Date(lastVisit).getTime()) / 86400000);
-    var urgency = daysSince > 30 ? 'red' : daysSince > 14 ? 'yellow' : 'green';
-    return { customer_id: c.id, store_name: c.store_name || c.nama, days_since_last_visit: daysSince, urgency: urgency, lat: c.latitude, lng: c.longitude };
+    var urgency = daysSince >= 7 ? 'red' : daysSince >= 3 ? 'yellow' : 'green';
+    return {
+      customer_id: c.id,
+      store_name: c.store_name || c.nama,
+      address: c.address || '',
+      latitude: c.latitude,
+      longitude: c.longitude,
+      sales_id: c.sales_id,
+      sales_name: salesMap[c.sales_id] || '',
+      days_since_last_visit: daysSince,
+      visit_count: visitCountMap[c.id] || 0,
+      urgency: urgency
+    };
   });
   reminders.sort(function(a, b) { return b.days_since_last_visit - a.days_since_last_visit; });
   return ok(reminders);
@@ -3587,12 +3611,16 @@ function renderDashboard(d){
   // ===== SECTION 6: FORECAST (loaded async) =====
   html+='<div id="dashboardForecast"></div>';
 
+  // ===== SECTION 7: VISIT REMINDERS (loaded async) =====
+  html+='<div id="dashboardOwnerReminders"></div>';
+
   document.getElementById('mainContent').innerHTML=html;
   _pageCache['dashboard']=html;
 
   // Load async alerts
   loadDashboardAlerts();
   loadDashboardForecast();
+  loadOwnerDashboardReminders();
 }
 
 function initDashboard(refresh){
@@ -3782,6 +3810,31 @@ function loadDashboardForecast(){
   html += '<div style="background:#F5F5F5;border-radius:8px;padding:14px;text-align:center"><div style="font-size:11px;color:var(--text-light)">Prediksi Omzet Bulan Depan</div><div style="font-size:16px;font-weight:700;color:var(--primary);margin-top:4px">Lihat grafik omzet bulanan</div></div>';
   html += '</div></div>';
   el.innerHTML = html;
+}
+
+function loadOwnerDashboardReminders(){
+  if (CURRENT_PAGE !== 'dashboard') return;
+  var el = document.getElementById('dashboardOwnerReminders');
+  if (!el) return;
+  api('getVisitReminders',{},function(r){
+    if (CURRENT_PAGE !== 'dashboard' || !r.success || !r.data) return;
+    var overdue = r.data.filter(function(i){return i.urgency==='red'||i.urgency==='yellow'});
+    if (overdue.length===0) return;
+    var html = '<div class="card" style="margin-top:12px;border:2px solid #FF6F00"><div class="flex-between"><h4 style="color:#FF6F00">📋 Toko yang Perlu Dikunjungi</h4><span style="font-size:12px;color:var(--text-light)">'+(r.data.length)+' total toko</span></div>';
+    overdue.forEach(function(c){
+      var days = c.days_since_last_visit;
+      var lastStr = days===999 ? 'Belum pernah' : days+' hari';
+      var color = c.urgency==='red' ? '#C62828' : '#F57F17';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F0F0F0">'+
+        '<div><strong>'+(c.store_name||'Toko')+'</strong><br><span style="font-size:12px;color:var(--text-light)">'+(c.sales_name||'')+((c.sales_name&&c.address)?' — ':'')+(c.address||'')+'</span></div>'+
+        '<div style="text-align:right"><span style="color:'+color+';font-weight:700;font-size:13px">'+lastStr+'</span></div></div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+    if (CURRENT_PAGE === 'dashboard') {
+      _pageCache['dashboard']=document.getElementById('mainContent').innerHTML;
+    }
+  });
 }
 
 // ====== UI HELPERS: Empty State, Toolbar, KPI Cards ======

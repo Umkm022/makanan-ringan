@@ -1850,23 +1850,47 @@ bridge._actions['getNotifikasi'] = async (params) => {
 };
 bridge._actions['getVisitReminders'] = async () => {
   const profile = await getCurrentProfile();
-  var q = _supabase.from('customers').select('id, store_name, latitude, longitude, sales_id');
+  var q = _supabase.from('customers').select('id, store_name, address, latitude, longitude, sales_id, status');
   if (profile.role === 'SALES') q = q.eq('sales_id', profile.sales_id);
-  const { data: customers } = await q;
-  var cIds = (customers || []).map(function(c){ return c.id; });
+  const { data: raw } = await q;
+  var customers = (raw || []).filter(function(c){ return c.status !== 'NONAKTIF' && c.status !== 'SUSPEND'; });
+
+  var salesIds = [...new Set(customers.map(function(c){ return c.sales_id; }).filter(Boolean))];
+  var salesMap = {};
+  if (salesIds.length) {
+    var { data: sales } = await _supabase.from('sales').select('id, full_name, nama').in('id', salesIds);
+    (sales || []).forEach(function(s){ salesMap[s.id] = s.full_name || s.nama || ''; });
+  }
+
+  var cIds = customers.map(function(c){ return c.id; });
   var visits = [];
   if (cIds.length) {
     var { data: v } = await _supabase.from('visits').select('customer_id, visit_date').eq('status', 'COMPLETED').in('customer_id', cIds).order('visit_date', { ascending: false });
     visits = v || [];
   }
   var lastVisitMap = {};
-  (visits || []).forEach(function(v){ if (!lastVisitMap[v.customer_id]) lastVisitMap[v.customer_id] = v.visit_date; });
-  var reminders = (customers || []).map(function(c) {
+  var visitCountMap = {};
+  (visits || []).forEach(function(v){
+    if (!lastVisitMap[v.customer_id]) lastVisitMap[v.customer_id] = v.visit_date;
+    visitCountMap[v.customer_id] = (visitCountMap[v.customer_id] || 0) + 1;
+  });
+  var reminders = customers.map(function(c) {
     var daysSince = 999;
     var lastVisit = lastVisitMap[c.id];
     if (lastVisit) daysSince = Math.floor((Date.now() - new Date(lastVisit).getTime()) / 86400000);
-    var urgency = daysSince > 30 ? 'red' : daysSince > 14 ? 'yellow' : 'green';
-    return { customer_id: c.id, store_name: c.store_name || c.nama, days_since_last_visit: daysSince, urgency: urgency, lat: c.latitude, lng: c.longitude };
+    var urgency = daysSince >= 7 ? 'red' : daysSince >= 3 ? 'yellow' : 'green';
+    return {
+      customer_id: c.id,
+      store_name: c.store_name || c.nama,
+      address: c.address || '',
+      latitude: c.latitude,
+      longitude: c.longitude,
+      sales_id: c.sales_id,
+      sales_name: salesMap[c.sales_id] || '',
+      days_since_last_visit: daysSince,
+      visit_count: visitCountMap[c.id] || 0,
+      urgency: urgency
+    };
   });
   reminders.sort(function(a, b) { return b.days_since_last_visit - a.days_since_last_visit; });
   return ok(reminders);
