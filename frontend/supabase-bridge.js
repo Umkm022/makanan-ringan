@@ -1025,6 +1025,7 @@ bridge._actions['createPembayaran'] = async (params) => {
     method: d.metode,
     notes: d.notes,
     payment_date: new Date().toISOString(),
+    status_penyetoran: 'BELUM_DISETOR',
   }).select().single();
   if (payErr) return fail(payErr.message);
   var newStatus = newRemaining <= 0 ? 'PAID' : 'PARTIAL';
@@ -1033,6 +1034,37 @@ bridge._actions['createPembayaran'] = async (params) => {
     await _supabase.from('invoices').update({ status: 'PAID' }).eq('id', recv.invoice_id);
   }
   return ok(payment, 'Pembayaran berhasil');
+};
+
+bridge._actions['setorPembayaran'] = async (params) => {
+  const d = params?.data || params;
+  if (!d.pembayaran_id) return fail('pembayaran_id diperlukan');
+  const { data, error } = await _supabase.from('payments').update({
+    status_penyetoran: 'SUDAH_DISETOR',
+    tanggal_penyetoran: new Date().toISOString(),
+  }).eq('id', d.pembayaran_id).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Penyetoran berhasil');
+};
+
+bridge._actions['getPembayaranSales'] = async (params) => {
+  const profile = await getCurrentProfile();
+  if (!profile.sales_id) return fail('Sales ID tidak ditemukan');
+  const { data } = await _supabase.from('payments').select('*, customers(*)').eq('sales_id', profile.sales_id).order('created_at', { ascending: false });
+  const result = (data || []).map(function(p) {
+    const c = p.customers || {};
+    return {
+      pembayaran_id: p.id,
+      invoice_id: p.invoice_id,
+      customer_nama: c.store_name || c.name || p.customer_id,
+      jumlah_bayar: p.amount || 0,
+      metode_bayar: p.method || '',
+      tanggal: p.payment_date || p.created_at || '',
+      status_penyetoran: p.status_penyetoran || 'BELUM_DISETOR',
+      tanggal_penyetoran: p.tanggal_penyetoran || null,
+    };
+  });
+  return ok(result);
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1415,7 +1447,9 @@ bridge._actions['generateReport'] = async (params) => {
     }
     // ── 8. Pembayaran ───────────────────────────────────────────
     case 'pembayaran': {
-      const { data } = await _supabase.from('payments').select('*, customers(*)');
+      let q = _supabase.from('payments').select('*, customers(*)');
+      if (d.sales_id) q = q.eq('sales_id', d.sales_id);
+      const { data } = await q;
       const result = (data || []).map(function(p) {
         const c = p.customers || {};
         return {
@@ -1423,7 +1457,9 @@ bridge._actions['generateReport'] = async (params) => {
           customer_nama: c.store_name || c.name || p.customer_id,
           jumlah_bayar: p.amount || 0,
           metode_bayar: p.method || '',
-          tanggal: p.payment_date || p.created_at || ''
+          tanggal: p.payment_date || p.created_at || '',
+          sales_id: p.sales_id || '',
+          status_penyetoran: p.status_penyetoran || 'BELUM_DISETOR',
         };
       });
       return ok(result);

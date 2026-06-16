@@ -2750,6 +2750,7 @@ function renderInvoiceNav() {
   html += '<button class="btn ' + (_invoiceView === 'invoices' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'invoices\')">Semua Invoice</button>';
   html += '<button class="btn ' + (_invoiceView === 'piutang' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'piutang\')">Piutang Aktif</button>';
   html += '<button class="btn ' + (_invoiceView === 'aging' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'aging\')">Aging Piutang</button>';
+  html += '<button class="btn ' + (_invoiceView === 'setor' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'setor\')">Setor</button>';
   html += '</div>';
   if(role==='OWNER'||role==='ADMIN'){
     html += '<div class="form-group" style="max-width:300px;margin-bottom:12px"><label>Filter Sales</label><select id="fInvSales" onchange="filterInvSales()"><option value="">Semua Sales</option></select></div>';
@@ -2778,6 +2779,7 @@ function loadInvoiceView() {
   if (_invoiceView === 'invoices') loadInvList();
   else if (_invoiceView === 'piutang') loadPiutangList();
   else if (_invoiceView === 'aging') loadAgingList();
+  else if (_invoiceView === 'setor') loadSetorList();
 }
 
 function loadInvList() {
@@ -2907,6 +2909,92 @@ function renderAgingTable(el, data) {
   html += '<tr style="font-weight:700"><td>Total</td><td>Rp ' + fmt(data.total || 0) + '</td></tr>';
   html += '</tbody></table></div></div>';
   el.innerHTML = html;
+}
+
+// ====== SETOR (Penyetoran) ======
+function loadSetorList() {
+  var el = document.getElementById('invoiceContent');
+  if (!el) return;
+  var role = (CURRENT_USER || {}).role;
+  if (role === 'SALES') {
+    el.innerHTML = '<div class="loading">Memuat pembayaran...</div>';
+    api('getPembayaranSales', {}, function(r) {
+      if (!r.success) { el.innerHTML = '<div class="card"><h3>Error</h3><p>' + (r.message || '') + '</p></div>'; return; }
+      renderSetorTable(el, r.data || []);
+    });
+  } else {
+    el.innerHTML = '<div class="loading">Memuat pembayaran...</div>';
+    api('generateReport', { type: 'pembayaran', sales_id: _invSalesFilter || undefined }, function(r) {
+      if (!r.success) { el.innerHTML = '<div class="card"><h3>Error</h3><p>' + (r.message || '') + '</p></div>'; return; }
+      renderSetorTableOwner(el, r.data || []);
+    });
+  }
+}
+
+function renderSetorTable(el, data) {
+  var belum = data.filter(function(p) { return p.status_penyetoran === 'BELUM_DISETOR'; });
+  var sudah = data.filter(function(p) { return p.status_penyetoran === 'SUDAH_DISETOR'; });
+  var totalBelum = belum.reduce(function(s, p) { return s + (p.jumlah_bayar || 0); }, 0);
+  var totalSudah = sudah.reduce(function(s, p) { return s + (p.jumlah_bayar || 0); }, 0);
+  var html = '';
+  html += '<div style="display:flex;gap:12px;margin-bottom:12px">';
+  html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:700;color:var(--error)">Rp ' + fmt(totalBelum) + '</div><div style="font-size:12px;color:var(--text-light)">Belum Disetor</div></div>';
+  html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:700;color:var(--success)">Rp ' + fmt(totalSudah) + '</div><div style="font-size:12px;color:var(--text-light)">Sudah Disetor</div></div>';
+  html += '</div>';
+
+  if (belum.length === 0 && sudah.length === 0) {
+    html += '<div class="card"><p style="color:var(--text-light)">Belum ada pembayaran.</p></div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  if (belum.length > 0) {
+    html += '<div class="card"><h4 style="color:var(--error);margin-bottom:8px">⏳ Belum Disetor</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Jumlah</th><th>Metode</th><th>Tgl Bayar</th><th></th></tr></thead><tbody>';
+    belum.forEach(function(p) {
+      html += '<tr><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td>';
+      html += '<td><button class="btn btn-sm btn-success" onclick="doSetor(\'' + p.pembayaran_id + '\')">Setor</button></td></tr>';
+    });
+    html += '</tbody></table></div></div>';
+  }
+
+  if (sudah.length > 0) {
+    html += '<div class="card"><h4 style="color:var(--success);margin-bottom:8px">✅ Sudah Disetor</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Jumlah</th><th>Metode</th><th>Tgl Bayar</th><th>Tgl Setor</th></tr></thead><tbody>';
+    sudah.forEach(function(p) {
+      html += '<tr><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td><td>' + (p.tanggal_penyetoran || '').substring(0, 10) + '</td></tr>';
+    });
+    html += '</tbody></table></div></div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function renderSetorTableOwner(el, data) {
+  if (data.length === 0) {
+    el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Belum ada pembayaran.</p></div>';
+    return;
+  }
+  var totalBelum = data.filter(function(p) { return p.status_penyetoran === 'BELUM_DISETOR'; }).reduce(function(s, p) { return s + (p.jumlah_bayar || 0); }, 0);
+  var totalSudah = data.filter(function(p) { return p.status_penyetoran === 'SUDAH_DISETOR'; }).reduce(function(s, p) { return s + (p.jumlah_bayar || 0); }, 0);
+  var html = '';
+  html += '<div style="display:flex;gap:12px;margin-bottom:12px">';
+  html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:700;color:var(--error)">Rp ' + fmt(totalBelum) + '</div><div style="font-size:12px;color:var(--text-light)">Belum Disetor</div></div>';
+  html += '<div class="card" style="flex:1;text-align:center;padding:12px"><div style="font-size:24px;font-weight:700;color:var(--success)">Rp ' + fmt(totalSudah) + '</div><div style="font-size:12px;color:var(--text-light)">Sudah Disetor</div></div>';
+  html += '</div>';
+  html += '<div class="card"><div style="overflow-x:auto"><table><thead><tr><th>Sales</th><th>Customer</th><th>Jumlah</th><th>Metode</th><th>Tgl Bayar</th><th>Status Setor</th></tr></thead><tbody>';
+  data.forEach(function(p) {
+    var st = p.status_penyetoran === 'SUDAH_DISETOR' ? '<span class="badge-success">SUDAH</span>' : '<span class="badge-danger">BELUM</span>';
+    html += '<tr><td>' + (p.sales_id || '').substring(0, 8) + '</td><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td><td>' + st + '</td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+  el.innerHTML = html;
+}
+
+function doSetor(pembayaranId) {
+  if (!confirm('Tandai pembayaran ini sudah disetor ke owner?')) return;
+  api('setorPembayaran', { data: { pembayaran_id: pembayaranId } }, function(r) {
+    if (r.success) { toast('✅ ' + r.message); loadSetorList(); }
+    else { toast('Error: ' + (r.message || '')); }
+  });
 }
 
 // ====== SALES PAGES ======
@@ -3584,7 +3672,7 @@ function renderLaporan(el, type, data) {
     case 'penjualan_per_customer': title='🏪 Penjualan per Customer';headers=['Customer','Total','Jumlah'];arr.forEach(function(h){rows.push([h.nama||h.customer_id||'','Rp '+fmt(h.total||0),h.jumlah||0])});break;
     case 'penjualan_per_sales': title='👤 Penjualan per Sales';headers=['Sales','Total','Jumlah'];arr.forEach(function(h){rows.push([h.nama||h.sales_id||'','Rp '+fmt(h.total||0),h.jumlah||0])});break;
     case 'piutang': title='💰 Piutang';headers=['Piutang','Customer','Total','Sisa','Status'];arr.forEach(function(p){rows.push([p.piutang_id||'',p.customer_nama||p.customer_id||'','Rp '+fmt(p.total_piutang||0),'Rp '+fmt(p.sisa_piutang||0),p.status||''])});break;
-    case 'pembayaran': title='💳 Pembayaran';headers=['Pembayaran','Customer','Jumlah','Metode','Tgl'];arr.forEach(function(p){rows.push([p.pembayaran_id||'',p.customer_nama||p.customer_id||'','Rp '+fmt(p.jumlah_bayar||0),p.metode_bayar||'',(p.tanggal||'').substring(0,10)])});break;
+    case 'pembayaran': title='💳 Pembayaran';headers=['Pembayaran','Customer','Jumlah','Metode','Tgl','Status Setor'];arr.forEach(function(p){rows.push([p.pembayaran_id||'',p.customer_nama||p.customer_id||'','Rp '+fmt(p.jumlah_bayar||0),p.metode_bayar||'',(p.tanggal||'').substring(0,10),p.status_penyetoran||'BELUM_DISETOR'])});break;
     case 'komisi': title='🏆 Komisi';headers=['Komisi','Sales','Nilai','Periode','Status'];arr.forEach(function(k){rows.push([k.komisi_id||'',k.sales_nama||k.sales_id||'','Rp '+fmt(k.nilai_komisi||0),(k.periode_bulan||'')+'/'+(k.periode_tahun||''),k.status||''])});break;
     case 'retur': title='🔄 Retur';headers=['Retur','Produk','Customer','Qty','Alasan'];arr.forEach(function(r){rows.push([r.retur_id||'',r.produk_nama||r.produk_id||'',r.customer_id||'',r.qty_retur||0,r.alasan||''])});break;
     case 'laba_kotor': title='📈 Laba Kotor';headers=['Periode','Penjualan','HPP','Laba Kotor'];arr.forEach(function(h){rows.push([h.periode||'','Rp '+fmt(h.total_penjualan||0),'Rp '+fmt(h.total_hpp||0),'Rp '+fmt(h.laba_kotor||0)])});break;
@@ -3633,7 +3721,7 @@ function downloadCSV(type) {
       penjualan_per_customer: {t:'Per Customer',h:['Customer','Total','Jumlah'],f:function(h){return[h.nama||h.customer_id||'','Rp '+fmt(h.total||0),h.jumlah||0]}},
       penjualan_per_sales: {t:'Per Sales',h:['Sales','Total','Jumlah'],f:function(h){return[h.nama||h.sales_id||'','Rp '+fmt(h.total||0),h.jumlah||0]}},
       piutang: {t:'Piutang',h:['Piutang','Customer','Total','Sisa','Status'],f:function(p){return[p.piutang_id||'',p.customer_nama||p.customer_id||'','Rp '+fmt(p.total_piutang||0),'Rp '+fmt(p.sisa_piutang||0),p.status||'']}},
-      pembayaran: {t:'Pembayaran',h:['Pembayaran','Customer','Jumlah','Metode','Tgl'],f:function(p){return[p.pembayaran_id||'',p.customer_nama||p.customer_id||'','Rp '+fmt(p.jumlah_bayar||0),p.metode_bayar||'',(p.tanggal||'').substring(0,10)]}},
+      pembayaran: {t:'Pembayaran',h:['Pembayaran','Customer','Jumlah','Metode','Tgl','Status Setor'],f:function(p){return[p.pembayaran_id||'',p.customer_nama||p.customer_id||'','Rp '+fmt(p.jumlah_bayar||0),p.metode_bayar||'',(p.tanggal||'').substring(0,10),p.status_penyetoran||'BELUM_DISETOR']}},
       komisi: {t:'Komisi',h:['Komisi','Sales','Nilai','Periode','Status'],f:function(k){return[k.komisi_id||'',k.sales_nama||k.sales_id||'','Rp '+fmt(k.nilai_komisi||0),(k.periode_bulan||'')+'/'+(k.periode_tahun||''),k.status||'']}},
       retur: {t:'Retur',h:['Retur','Produk','Customer','Qty','Alasan'],f:function(r){return[r.retur_id||'',r.produk_nama||r.produk_id||'',r.customer_id||'',r.qty_retur||0,r.alasan||'']}},
       laba_kotor: {t:'Laba Kotor',h:['Periode','Total','Laba','Margin'],f:function(h){return[h.label||'','Rp '+fmt(h.total||0),'Rp '+fmt(h.laba||0),h.margin||'0%']}},
