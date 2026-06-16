@@ -1188,6 +1188,26 @@ bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) =
   return ok(shp, 'Titipan berhasil');
 };
 
+bridge._actions['getShipmentDetail'] = async (params) => {
+  const d = params?.data || params;
+  const { data: shp, error } = await _supabase.from('shipments')
+    .select('*, customers(*), sales(*), shipment_details(*, products(*))')
+    .eq('id', d.shipment_id)
+    .single();
+  if (error) return fail(error.message);
+  return ok(shp);
+};
+
+bridge._actions['getAllShipments'] = async (params) => {
+  const d = params?.data || params;
+  let query = _supabase.from('shipments').select('*, customers(store_name), sales(full_name)').order('created_at', { ascending: false });
+  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (d?.limit) query = query.limit(d.limit);
+  const { data, error } = await query;
+  if (error) return fail(error.message);
+  return ok(data || []);
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // DASHBOARD ACTIONS
 // ═══════════════════════════════════════════════════════════════════

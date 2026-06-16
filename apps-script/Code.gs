@@ -141,6 +141,8 @@ function routeAction(action, params, session) {
     // TITIP BARANG
     case 'createTitip':           return TitipanService.createTitip(params.data, session);
     case 'bulkTitip':             return TitipanService.bulkTitip(params, session);
+    case 'getShipmentDetail':     return TitipanService.getShipmentDetail(params, session);
+    case 'getAllShipments':       return TitipanService.getAllShipments(params, session);
 
     // STOK
     case 'getStokGudang':         return StokService.getStokGudang();

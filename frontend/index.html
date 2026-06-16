@@ -1705,6 +1705,26 @@ bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) =
   return ok(shp, 'Titipan berhasil');
 };
 
+bridge._actions['getShipmentDetail'] = async (params) => {
+  const d = params?.data || params;
+  const { data: shp, error } = await _supabase.from('shipments')
+    .select('*, customers(*), sales(*), shipment_details(*, products(*))')
+    .eq('id', d.shipment_id)
+    .single();
+  if (error) return fail(error.message);
+  return ok(shp);
+};
+
+bridge._actions['getAllShipments'] = async (params) => {
+  const d = params?.data || params;
+  let query = _supabase.from('shipments').select('*, customers(store_name), sales(full_name)').order('created_at', { ascending: false });
+  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (d?.limit) query = query.limit(d.limit);
+  const { data, error } = await query;
+  if (error) return fail(error.message);
+  return ok(data || []);
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // DASHBOARD ACTIONS
 // ═══════════════════════════════════════════════════════════════════
@@ -3902,6 +3922,7 @@ function mulaiKunjungan(){
       kunjunganState.latitude=lat;
       kunjunganState.longitude=lng;
       kunjunganState.loading = false;
+      toast('✅ Kunjungan dimulai di ' + (r.data.customer.store_name || r.data.customer.customer_id) + ' 📍', 4000);
       showKunjunganStep2();
     });
   };
@@ -4657,6 +4678,8 @@ function renderTitipPage() {
   html+='<button class="btn btn-outline" onclick="batalTitip()" style="margin-top:4px;width:100%">Batal</button>';
   html+='<div id="titipResult" style="margin-top:8px"></div>';
   html+='</div></div>';
+  html+='<div style="grid-column:1/-1;margin-top:8px"><button class="btn btn-outline btn-sm" onclick="showRiwayatTitip()" style="width:100%">📋 Riwayat Titipan</button></div>';
+  html+='<div id="riwayatTitipContainer" style="grid-column:1/-1"></div>';
   mc.innerHTML=html;
   loadSalesDropdown('fTitipSales', '');
   loadProdukDropdown('fCartProduk', '');
@@ -4748,7 +4771,8 @@ function simpanTitipCart(){
   if(btnEl)btnEl.disabled=true;
   api('createTitip',{data:{customer_id:customerId,tipe:document.getElementById('fTitipTipe').value,items:items}},function(r){
     if(!r.success){el.innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';if(btnEl)btnEl.disabled=false;return}
-    el.innerHTML='<p style="color:var(--success);font-weight:600">✅ '+r.message+'</p>';
+    el.innerHTML='<p style="color:var(--success);font-weight:600">✅ '+r.message+'</p>'+
+      '<div style="margin-top:12px"><button class="btn btn-primary" onclick="printSuratJalan(\''+r.data.id+'\')">🖨️ Cetak Surat Jalan</button></div>';
     _titipCart=[];
     renderCart();
     invalidateCache('titipan'); toast('Titipan berhasil');
@@ -4764,6 +4788,28 @@ function batalTitip(){
   document.getElementById('fCartHarga').value='0';
   document.getElementById('titipResult').innerHTML='';
   toast('Keranjang dikosongkan');
+}
+
+function showRiwayatTitip(){
+  var el=document.getElementById('riwayatTitipContainer');
+  if(el.innerHTML){el.innerHTML='';return}
+  el.innerHTML='<div class="loading">Memuat riwayat...</div>';
+  var salesEl=document.getElementById('fTitipSales');
+  var salesId=salesEl?salesEl.value:'';
+  api('getAllShipments',{sales_id:salesId||undefined,limit:20},function(r){
+    if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
+    var data=r.data||[];
+    if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Belum ada titipan.</p></div>';return}
+    var html='<div class="card"><h4>Riwayat Titipan</h4><div style="overflow-x:auto"><table><thead><tr><th>No</th><th>Tanggal</th><th>Toko</th><th>Sales</th><th>Qty</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
+    data.forEach(function(s,i){
+      var cust=s.customers||{};
+      var sal=s.sales||{};
+      html+='<tr><td>SJ-'+((s.id||'').substring(0,6).toUpperCase())+'</td><td>'+(s.created_at||'').substring(0,10)+'</td><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(sal.full_name||s.sales_id||'')+'</td><td>'+(s.total_qty||0)+'</td><td>'+(s.status||'')+'</td>';
+      html+='<td><button class="btn btn-sm btn-primary" onclick="printSuratJalan(\''+s.id+'\')">🖨️ Cetak</button></td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+    el.innerHTML=html;
+  });
 }
 
 // ====== INVOICE PAGE ======
@@ -4950,15 +4996,13 @@ function loadSetorList() {
   var role = (CURRENT_USER || {}).role;
   if (role === 'SALES') {
     el.innerHTML = '<div class="loading">Memuat pembayaran...</div>';
-    api('generateReport', { type: 'pembayaran', sales_id: _invSalesFilter || undefined }, function(r) {
+    api('getPembayaranSales', {}, function(r) {
       if (!r.success) { el.innerHTML = '<div class="card"><h3>Error</h3><p>' + (r.message || '') + '</p></div>'; return; }
-      renderSetorTableOwner(el, r.data || []);
+      renderSetorTable(el, r.data || []);
     });
   } else {
     el.innerHTML = '<div class="loading">Memuat pembayaran...</div>';
-    var params = {};
-    if (_invSalesFilter) params.sales_id = _invSalesFilter;
-    api('getAllLaporan', { data: { type: 'pembayaran', sales_id: _invSalesFilter } }, function(r) {
+    api('generateReport', { type: 'pembayaran', sales_id: _invSalesFilter || undefined }, function(r) {
       if (!r.success) { el.innerHTML = '<div class="card"><h3>Error</h3><p>' + (r.message || '') + '</p></div>'; return; }
       renderSetorTableOwner(el, r.data || []);
     });
@@ -5775,6 +5819,78 @@ function downloadCSV(type) {
     a.click();
     URL.revokeObjectURL(a.href);
     toast('✅ CSV diunduh');
+  });
+}
+
+function printSuratJalan(shipmentId) {
+  api('getShipmentDetail', { shipment_id: shipmentId }, function(r) {
+    if (!r.success) { toast('Gagal memuat data: ' + (r.message || '')); return; }
+    var s = r.data || {};
+    var cust = s.customers || {};
+    var sal = s.sales || {};
+    var details = s.shipment_details || [];
+    var tgl = (s.created_at || '').substring(0, 10);
+    var noSJ = 'SJ-' + (s.id || '').substring(0, 8).toUpperCase();
+    var html = '<div style="max-width:700px;margin:0 auto;font-family:sans-serif;color:#000">';
+    html += '<div style="text-align:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px">';
+    html += '<h2 style="margin:0;font-size:20px;letter-spacing:1px">SUPPLIER SEBLAK</h2>';
+    html += '<p style="margin:4px 0;font-size:13px">Jl. Contoh No. 123, Bandung | Telp: 0812-3456-7890</p>';
+    html += '<h3 style="margin:12px 0 4px;font-size:16px;text-transform:uppercase;letter-spacing:2px">Surat Jalan Titipan</h3>';
+    html += '</div>';
+    html += '<table style="width:100%;font-size:13px;margin-bottom:16px">';
+    html += '<tr><td style="width:100px;padding:2px 0"><strong>No. Surat</strong></td><td>: ' + noSJ + '</td></tr>';
+    html += '<tr><td style="padding:2px 0"><strong>Tanggal</strong></td><td>: ' + tgl + '</td></tr>';
+    html += '<tr><td style="padding:2px 0"><strong>Sales</strong></td><td>: ' + (sal.full_name || s.sales_id || '-') + '</td></tr>';
+    html += '</table>';
+    html += '<div style="margin-bottom:16px;font-size:13px">';
+    html += '<strong>Kepada Yth,</strong><br>';
+    html += '<span style="font-size:14px">' + (cust.store_name || '-') + '</span><br>';
+    if (cust.address) html += cust.address + '<br>';
+    var district = cust.district || cust.kecamatan || '';
+    var city = cust.city || cust.kota || '';
+    if (city || district) html += (district ? district + ', ' : '') + city + '<br>';
+    html += '</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">';
+    html += '<thead><tr style="background:#f0f0f0">';
+    html += '<th style="border:1px solid #999;padding:6px 8px;text-align:center;width:40px">No</th>';
+    html += '<th style="border:1px solid #999;padding:6px 8px;text-align:left">Nama Produk</th>';
+    html += '<th style="border:1px solid #999;padding:6px 8px;text-align:center;width:80px">Qty</th>';
+    html += '</tr></thead><tbody>';
+    var totalQty = 0;
+    details.forEach(function(item, i) {
+      var prod = item.products || {};
+      totalQty += item.qty || 0;
+      html += '<tr>';
+      html += '<td style="border:1px solid #999;padding:6px 8px;text-align:center">' + (i + 1) + '</td>';
+      html += '<td style="border:1px solid #999;padding:6px 8px">' + (prod.name || item.nama_produk || item.product_id || item.produk_id || '-') + '</td>';
+      html += '<td style="border:1px solid #999;padding:6px 8px;text-align:center">' + (item.qty || 0) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700">';
+    html += '<td style="border:1px solid #999;padding:6px 8px;text-align:center" colspan="2">Total</td>';
+    html += '<td style="border:1px solid #999;padding:6px 8px;text-align:center">' + totalQty + '</td>';
+    html += '</tr>';
+    html += '</tbody></table>';
+    if (s.notes) {
+      html += '<div style="font-size:12px;margin-bottom:16px"><strong>Catatan:</strong> ' + s.notes + '</div>';
+    }
+    html += '<div style="font-size:12px;color:#555;margin-bottom:24px;font-style:italic">Barang-barang tersebut dititipkan untuk dijual dengan sistem konsinyasi.</div>';
+    html += '<table style="width:100%;font-size:13px;margin-top:32px">';
+    html += '<tr>';
+    html += '<td style="text-align:center;width:50%">';
+    html += '<div style="margin-bottom:48px">Penerima,</div>';
+    html += '<div style="border-top:1px solid #000;display:inline-block;padding-top:4px;min-width:160px">( ' + (cust.store_name || '') + ' )</div>';
+    html += '</td>';
+    html += '<td style="text-align:center;width:50%">';
+    html += '<div style="margin-bottom:48px">Pengirim,</div>';
+    html += '<div style="border-top:1px solid #000;display:inline-block;padding-top:4px;min-width:160px">( ' + (sal.full_name || '') + ' )</div>';
+    html += '</td>';
+    html += '</tr>';
+    html += '</table>';
+    html += '</div>';
+    var w = window.open('', '_blank');
+    w.document.write('<html><head><style>body{margin:0;padding:20px}@media print{@page{margin:15mm}body{padding:0}}</style></head><body>' + html + '<script>window.print();window.close();<\/script></body></html>');
+    w.document.close();
   });
 }
 

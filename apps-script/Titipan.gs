@@ -102,5 +102,74 @@ var TitipanService = {
     logActivity(session.user_id, 'CREATE', 'BULK_TITIP', count + ' customers', 'Bulk titip ke ' + count + ' customer', null, data);
     clearDataCache();
     return respond(true, 'Berhasil titip ke ' + count + ' customer', { count: count });
+  },
+
+  getShipmentDetail: function(params, session) {
+    var shpId = params.shipment_id;
+    if (!shpId) return respond(false, 'Parameter shipment_id diperlukan', null);
+    var headers = getDataAsObjects('12_TITIP_HEADER');
+    var header = headers.filter(function(h) { return h.titip_id === shpId; })[0];
+    if (!header) return respond(false, 'Data tidak ditemukan', null);
+    var details = getDataAsObjects('13_TITIP_DETAIL');
+    var dets = details.filter(function(d) { return d.titip_id === shpId; });
+    var customers = getDataAsObjects('04_CUSTOMERS');
+    var cust = customers.filter(function(c) { return c.customer_id === header.customer_id; })[0] || {};
+    var sales = getDataAsObjects('02_SALES');
+    var sal = sales.filter(function(sl) { return sl.sales_id === header.sales_id; })[0] || {};
+    var produk = getDataAsObjects('06_PRODUK');
+    var mappedDets = dets.map(function(d) {
+      var pr = produk.filter(function(p) { return p.produk_id === d.produk_id; })[0] || {};
+      return {
+        qty: d.qty_titip,
+        nama_produk: pr.nama_produk || d.produk_id,
+        produk_id: d.produk_id
+      };
+    });
+    var result = {
+      id: header.titip_id,
+      customer_id: header.customer_id,
+      sales_id: header.sales_id,
+      tipe: header.tipe_titip,
+      status: header.status,
+      total_qty: header.total_qty,
+      notes: header.notes,
+      created_at: header.tanggal_titip,
+      customers: cust,
+      sales: sal,
+      shipment_details: mappedDets
+    };
+    return respond(true, '', result);
+  },
+
+  getAllShipments: function(params, session) {
+    var headers = getDataAsObjects('12_TITIP_HEADER');
+    if (session.role === 'SALES') {
+      var salesId = getSalesIdFromSession(session);
+      headers = headers.filter(function(h) { return h.sales_id === salesId; });
+    }
+    if (params && params.sales_id && session.role !== 'SALES') {
+      headers = headers.filter(function(h) { return h.sales_id === params.sales_id; });
+    }
+    headers.sort(function(a, b) { return (b.tanggal_titip || '').localeCompare(a.tanggal_titip || ''); });
+    if (params && params.limit) headers = headers.slice(0, params.limit);
+    var customers = getDataAsObjects('04_CUSTOMERS');
+    var sales = getDataAsObjects('02_SALES');
+    var result = headers.map(function(h) {
+      var cust = customers.filter(function(c) { return c.customer_id === h.customer_id; })[0] || {};
+      var sal = sales.filter(function(sl) { return sl.sales_id === h.sales_id; })[0] || {};
+      return {
+        id: h.titip_id,
+        customer_id: h.customer_id,
+        sales_id: h.sales_id,
+        tipe: h.tipe_titip,
+        status: h.status,
+        total_qty: h.total_qty,
+        notes: h.notes,
+        created_at: h.tanggal_titip,
+        customers: { store_name: cust.store_name },
+        sales: { full_name: sal.full_name }
+      };
+    });
+    return respond(true, '', result);
   }
 };
