@@ -76,5 +76,47 @@ var NotifikasiService = {
     if (row > 0) {
       getSheet('26_NOTIFIKASI').getRange(row, 8).setValue(true);
     }
+  },
+
+  requestTitipAwal: function(params, session) {
+    var customerId = params.customer_id;
+    if (!customerId) return respond(false, 'Customer ID diperlukan');
+
+    var allNotif = getDataAsObjects('26_NOTIFIKASI');
+    var existing = allNotif.filter(function(n) {
+      return n.tipe === 'REQUEST_TITIP_AWAL' && !n.is_read && n.pesan.indexOf(customerId) > -1;
+    });
+    if (existing.length > 0) return respond(false, 'Sudah pernah minta titip awal untuk toko ini, tunggu Owner proses');
+
+    var customers = getDataAsObjects('04_CUSTOMERS');
+    var cust = customers.filter(function(c) { return c.customer_id === customerId || c.id === customerId; })[0];
+    if (!cust) return respond(false, 'Customer tidak ditemukan');
+
+    var users = getDataAsObjects('01_USERS');
+    var owners = users.filter(function(u) { return u.role === 'OWNER'; });
+    if (owners.length === 0) return respond(false, 'Tidak ada Owner terdaftar');
+
+    var pesan = 'Sales ' + (session.full_name || session.username) + ' meminta titip awal untuk ' + (cust.store_name || cust.nama) + ' (' + customerId + ')';
+    var link = '?page=titipan&customer_id=' + customerId;
+
+    owners.forEach(function(o) {
+      this.createNotif(o.user_id, 'REQUEST_TITIP_AWAL', '📦 Request Titip Awal', pesan, link);
+    }, this);
+
+    return respond(true, '✅ Permintaan titip awal sudah dikirim ke Owner', null);
+  },
+
+  fulfillTitipRequest: function(params, session) {
+    var customerId = params.customer_id;
+    if (!customerId) return respond(true, '', null);
+
+    var allNotif = getDataAsObjects('26_NOTIFIKASI');
+    allNotif.forEach(function(n) {
+      if (n.tipe === 'REQUEST_TITIP_AWAL' && n.is_read !== 'true' && n.is_read !== true && n.pesan.indexOf(customerId) > -1) {
+        var row = findRow('26_NOTIFIKASI', 0, n.notifikasi_id);
+        if (row > 0) getSheet('26_NOTIFIKASI').getRange(row, 8).setValue(true);
+      }
+    });
+    return respond(true, 'Permintaan titip terpenuhi', null);
   }
 };

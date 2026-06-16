@@ -22,6 +22,7 @@ var ReportService = {
       case 'stok_gudang':             return this._stokGudang(params);
       case 'stok_konsinyasi':         return this._stokKonsinyasi(params);
       case 'forecast_restock':        return this._forecastRestock(params);
+      case 'kunjungan_harian':        return this._kunjunganHarian(params);
       case 'buku_kas':                return this._bukuKas(params);
       case 'rekap_kas':               return this._rekapKas(params);
       default: return respond(false, 'Tipe report tidak dikenal', null);
@@ -353,6 +354,37 @@ var ReportService = {
   // 18. Rekap Kas (saldo per rekening)
   _rekapKas: function(params) {
     return KasService.getRekapKas(params);
+  },
+
+  // 17. Kunjungan Harian
+  _kunjunganHarian: function(params) {
+    var all = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var sales = getDataAsObjects('02_SALES');
+    var customers = getDataAsObjects('04_CUSTOMERS');
+    var tgl = (params && params.tanggal) || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    var filtered = all.filter(function(v) {
+      if (!v.tanggal_kunjungan) return false;
+      var vt = Utilities.formatDate(new Date(v.tanggal_kunjungan), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      return vt === tgl;
+    });
+    filtered.sort(function(a, b) {
+      var da = new Date(a.tanggal_kunjungan + 'T' + (a.waktu_mulai || '00:00'));
+      var db = new Date(b.tanggal_kunjungan + 'T' + (b.waktu_mulai || '00:00'));
+      return db - da;
+    });
+    return respond(true, '', filtered.map(function(v) {
+      var s = sales.filter(function(sa) { return sa.sales_id === v.sales_id; })[0] || {};
+      var c = customers.filter(function(cu) { return cu.customer_id === v.customer_id; })[0] || {};
+      return {
+        tanggal: v.tanggal_kunjungan ? String(v.tanggal_kunjungan).substring(0, 10) : '',
+        jam_mulai: v.waktu_mulai ? String(v.waktu_mulai).substring(0, 5) : '',
+        jam_selesai: v.waktu_selesai ? String(v.waktu_selesai).substring(0, 5) : '',
+        sales_nama: s.full_name || s.nama || v.sales_id || '',
+        customer_nama: c.store_name || c.nama || v.customer_id || '',
+        status: v.status || '',
+        total_invoice: v.total_invoice || 0
+      };
+    }));
   },
 
   // 16. Forecast Restock

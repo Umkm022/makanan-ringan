@@ -163,6 +163,9 @@ function routeAction(action, params, session) {
     case 'getRekapKas':           return KasService.getRekapKas(session);
 
     // NOTIFIKASI
+    case 'checkCustomerStock':    return StokService.checkCustomerStock(params, session);
+    case 'requestTitipAwal':      return NotifikasiService.requestTitipAwal(params, session);
+    case 'fulfillTitipRequest':   return NotifikasiService.fulfillTitipRequest(params, session);
 
     // DASHBOARD
     case 'getOwnerDashboard':     return DashboardService.getOwnerDashboard(session);

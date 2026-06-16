@@ -813,6 +813,15 @@ bridge._actions['getStokKonsinyasiById'] = async (params) => {
   return ok(data ? mapFields(data, consignmentMap) : null);
 };
 
+bridge._actions['checkCustomerStock'] = async (params) => {
+  const d = params?.data || params;
+  if (!d.customer_id) return ok(false);
+  const { count } = await _supabase.from('consignment_stock')
+    .select('id', { count: 'exact', head: true })
+    .eq('customer_id', d.customer_id);
+  return ok({ hasStock: (count || 0) > 0 });
+};
+
 bridge._actions['getStokKonsinyasi'] = async (params) => {
   const d = params?.data || params;
   let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
@@ -1181,6 +1190,27 @@ bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) =
   if (shpErr) return fail(shpErr.message);
   for (var item of items) {
     await _supabase.from('shipment_details').insert({ shipment_id: shp.id, product_id: item.produk_id, qty: item.qty });
+
+    // Kurangi stok gudang (FIFO)
+    var { data: gudangList } = await _supabase.from('warehouse_stock')
+      .select('*').eq('product_id', item.produk_id).gt('qty_remaining', 0)
+      .order('created_at', { ascending: true });
+    var need = item.qty;
+    if (gudangList) {
+      for (var g of gudangList) {
+        if (need <= 0) break;
+        var deduct = Math.min(need, g.qty_remaining || 0);
+        await _supabase.from('warehouse_stock').update({
+          qty_out: (g.qty_out || 0) + deduct,
+          qty_remaining: (g.qty_remaining || 0) - deduct
+        }).eq('id', g.id);
+        need -= deduct;
+      }
+    }
+    if (need > 0) {
+      return fail('Stok gudang untuk produk ' + item.produk_id + ' tidak mencukupi. Kurang ' + need + ' pcs');
+    }
+
     var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('product_id', item.produk_id).maybeSingle();
     if (cs) { await _supabase.from('consignment_stock').update({ qty_consigned: (cs.qty_consigned || 0) + item.qty, qty_remaining: (cs.qty_remaining || 0) + item.qty }).eq('id', cs.id); }
     else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, product_id: item.produk_id, sales_id: salesId, qty_consigned: item.qty, qty_sold: 0, qty_returned: 0, qty_remaining: item.qty }); }
@@ -1632,6 +1662,28 @@ bridge._actions['generateReport'] = async (params) => {
       });
       return ok(result.sort(function(a, b) { return b.rekomendasi_restock - a.rekomendasi_restock; }));
     }
+    // ── 17. Kunjungan Harian ────────────────────────────────────────
+    case 'kunjungan_harian': {
+      const { data: visits } = await _supabase.from('visits')
+        .select('*, customers(store_name), sales(full_name)')
+        .gte('visit_date', d.tanggal || new Date().toISOString().substring(0, 10))
+        .order('visit_date', { ascending: false })
+        .order('start_time', { ascending: true });
+      const result = (visits || []).map(function(v) {
+        const c = v.customers || {};
+        const s = v.sales || {};
+        return {
+          tanggal: v.visit_date ? v.visit_date.substring(0, 10) : '',
+          jam_mulai: v.start_time ? v.start_time.substring(11, 16) : '',
+          jam_selesai: v.end_time ? v.end_time.substring(11, 16) : '',
+          sales_nama: s.full_name || v.sales_id || '',
+          customer_nama: c.store_name || v.customer_id || '',
+          status: v.status || '',
+          total_invoice: v.total_invoice || 0
+        };
+      });
+      return ok(result);
+    }
     default:
       return fail('Unknown report type: ' + d.type);
   }
@@ -1824,6 +1876,47 @@ bridge._actions['getNotifications'] = async () => {
 bridge._actions['markNotifRead'] = async (params) => {
   await _supabase.from('notifications').update({ is_read: true }).eq('id', params.id);
   return ok(null, 'Notifikasi dibaca');
+};
+
+bridge._actions['requestTitipAwal'] = async (params) => {
+  const profile = await getCurrentProfile();
+  const d = params?.data || params;
+  const customerId = d.customer_id;
+  if (!customerId) return fail('Customer ID diperlukan');
+
+  const { data: existing } = await _supabase.from('notifications')
+    .select('id').eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
+    .filter('pesan', 'like', `%${customerId}%`).limit(1).maybeSingle();
+  if (existing) return fail('Sudah pernah minta titip awal untuk toko ini, tunggu Owner proses');
+
+  const { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).maybeSingle();
+  if (!cust) return fail('Customer tidak ditemukan');
+
+  const { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+  if (!owners || owners.length === 0) return fail('Tidak ada Owner terdaftar');
+
+  const pesan = `Sales ${profile.full_name || profile.username} meminta titip awal untuk ${cust.store_name} (${customerId})`;
+  const link = `?page=titipan&customer_id=${customerId}`;
+
+  for (const owner of owners) {
+    await _supabase.from('notifications').insert({
+      user_id: owner.id, tipe: 'REQUEST_TITIP_AWAL',
+      judul: '📦 Request Titip Awal', pesan, link,
+      is_read: false, created_at: new Date()
+    });
+  }
+  return ok(null, '✅ Permintaan titip awal sudah dikirim ke Owner');
+};
+
+bridge._actions['fulfillTitipRequest'] = async (params) => {
+  const d = params?.data || params;
+  const customerId = d.customer_id;
+  if (!customerId) return ok(null);
+  await _supabase.from('notifications')
+    .update({ is_read: true })
+    .eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
+    .filter('pesan', 'like', `%${customerId}%`);
+  return ok(null, 'Permintaan titip terpenuhi');
 };
 
 // ═══════════════════════════════════════════════════════════════════

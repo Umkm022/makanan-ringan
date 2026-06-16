@@ -1330,6 +1330,15 @@ bridge._actions['getStokKonsinyasiById'] = async (params) => {
   return ok(data ? mapFields(data, consignmentMap) : null);
 };
 
+bridge._actions['checkCustomerStock'] = async (params) => {
+  const d = params?.data || params;
+  if (!d.customer_id) return ok(false);
+  const { count } = await _supabase.from('consignment_stock')
+    .select('id', { count: 'exact', head: true })
+    .eq('customer_id', d.customer_id);
+  return ok({ hasStock: (count || 0) > 0 });
+};
+
 bridge._actions['getStokKonsinyasi'] = async (params) => {
   const d = params?.data || params;
   let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
@@ -1698,6 +1707,27 @@ bridge._actions['createTitip'] = bridge._actions['bulkTitip'] = async (params) =
   if (shpErr) return fail(shpErr.message);
   for (var item of items) {
     await _supabase.from('shipment_details').insert({ shipment_id: shp.id, product_id: item.produk_id, qty: item.qty });
+
+    // Kurangi stok gudang (FIFO)
+    var { data: gudangList } = await _supabase.from('warehouse_stock')
+      .select('*').eq('product_id', item.produk_id).gt('qty_remaining', 0)
+      .order('created_at', { ascending: true });
+    var need = item.qty;
+    if (gudangList) {
+      for (var g of gudangList) {
+        if (need <= 0) break;
+        var deduct = Math.min(need, g.qty_remaining || 0);
+        await _supabase.from('warehouse_stock').update({
+          qty_out: (g.qty_out || 0) + deduct,
+          qty_remaining: (g.qty_remaining || 0) - deduct
+        }).eq('id', g.id);
+        need -= deduct;
+      }
+    }
+    if (need > 0) {
+      return fail('Stok gudang untuk produk ' + item.produk_id + ' tidak mencukupi. Kurang ' + need + ' pcs');
+    }
+
     var { data: cs } = await _supabase.from('consignment_stock').select('*').eq('customer_id', d.customer_id).eq('product_id', item.produk_id).maybeSingle();
     if (cs) { await _supabase.from('consignment_stock').update({ qty_consigned: (cs.qty_consigned || 0) + item.qty, qty_remaining: (cs.qty_remaining || 0) + item.qty }).eq('id', cs.id); }
     else { await _supabase.from('consignment_stock').insert({ customer_id: d.customer_id, product_id: item.produk_id, sales_id: salesId, qty_consigned: item.qty, qty_sold: 0, qty_returned: 0, qty_remaining: item.qty }); }
@@ -2149,6 +2179,28 @@ bridge._actions['generateReport'] = async (params) => {
       });
       return ok(result.sort(function(a, b) { return b.rekomendasi_restock - a.rekomendasi_restock; }));
     }
+    // ── 17. Kunjungan Harian ────────────────────────────────────────
+    case 'kunjungan_harian': {
+      const { data: visits } = await _supabase.from('visits')
+        .select('*, customers(store_name), sales(full_name)')
+        .gte('visit_date', d.tanggal || new Date().toISOString().substring(0, 10))
+        .order('visit_date', { ascending: false })
+        .order('start_time', { ascending: true });
+      const result = (visits || []).map(function(v) {
+        const c = v.customers || {};
+        const s = v.sales || {};
+        return {
+          tanggal: v.visit_date ? v.visit_date.substring(0, 10) : '',
+          jam_mulai: v.start_time ? v.start_time.substring(11, 16) : '',
+          jam_selesai: v.end_time ? v.end_time.substring(11, 16) : '',
+          sales_nama: s.full_name || v.sales_id || '',
+          customer_nama: c.store_name || v.customer_id || '',
+          status: v.status || '',
+          total_invoice: v.total_invoice || 0
+        };
+      });
+      return ok(result);
+    }
     default:
       return fail('Unknown report type: ' + d.type);
   }
@@ -2341,6 +2393,47 @@ bridge._actions['getNotifications'] = async () => {
 bridge._actions['markNotifRead'] = async (params) => {
   await _supabase.from('notifications').update({ is_read: true }).eq('id', params.id);
   return ok(null, 'Notifikasi dibaca');
+};
+
+bridge._actions['requestTitipAwal'] = async (params) => {
+  const profile = await getCurrentProfile();
+  const d = params?.data || params;
+  const customerId = d.customer_id;
+  if (!customerId) return fail('Customer ID diperlukan');
+
+  const { data: existing } = await _supabase.from('notifications')
+    .select('id').eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
+    .filter('pesan', 'like', `%${customerId}%`).limit(1).maybeSingle();
+  if (existing) return fail('Sudah pernah minta titip awal untuk toko ini, tunggu Owner proses');
+
+  const { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).maybeSingle();
+  if (!cust) return fail('Customer tidak ditemukan');
+
+  const { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+  if (!owners || owners.length === 0) return fail('Tidak ada Owner terdaftar');
+
+  const pesan = `Sales ${profile.full_name || profile.username} meminta titip awal untuk ${cust.store_name} (${customerId})`;
+  const link = `?page=titipan&customer_id=${customerId}`;
+
+  for (const owner of owners) {
+    await _supabase.from('notifications').insert({
+      user_id: owner.id, tipe: 'REQUEST_TITIP_AWAL',
+      judul: '📦 Request Titip Awal', pesan, link,
+      is_read: false, created_at: new Date()
+    });
+  }
+  return ok(null, '✅ Permintaan titip awal sudah dikirim ke Owner');
+};
+
+bridge._actions['fulfillTitipRequest'] = async (params) => {
+  const d = params?.data || params;
+  const customerId = d.customer_id;
+  if (!customerId) return ok(null);
+  await _supabase.from('notifications')
+    .update({ is_read: true })
+    .eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
+    .filter('pesan', 'like', `%${customerId}%`);
+  return ok(null, 'Permintaan titip terpenuhi');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3222,7 +3315,7 @@ function renderDashboard(d){
     html+='<div class="kpi-card" style="border-top:3px solid '+k.c+'" onclick="showKpiDetail(\''+k.t+'\')">';
     html+='<div class="kpi-value" style="color:'+k.c+'">'+val+'</div>';
     html+='<div class="kpi-label">'+k.l+'</div>';
-    if(k.s==='Rp'&&k.v>0) html+='<div class="kpi-sub">'+k.l+'</div>';
+
     html+='</div>';
   });
   html+='</div>';
@@ -3408,9 +3501,10 @@ function loadSalesReminders(callback) {
       (warning.length?'<p style="font-size:13px;color:#F57F17">🟡 '+warning.length+' produk perlu diisi (3-7 hari)</p>':'');
     r.data.slice(0,10).forEach(function(s){
       var color = s.status==='kritis'?'#C62828':'#F57F17';
+      var days = s.estimated_days_left !== undefined ? s.estimated_days_left : s.days_until_empty;
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F0F0F0;font-size:13px">'+
         '<div><strong>'+(s.store_name||'')+'</strong> — '+(s.produk_name||'')+'<br><span style="font-size:11px;color:var(--text-light)">Sisa: '+s.qty_sisa+' | Rata: '+s.daily_avg_sales+'/hari</span></div>'+
-        '<div style="color:'+color+';font-weight:600">±'+s.days_until_empty+' hari</div></div>';
+        '<div style="color:'+color+';font-weight:600">±'+(days===999?'?':days)+' hari</div></div>';
     });
     html += '</div>';
     mc.insertAdjacentHTML('beforeend', html);
@@ -3871,17 +3965,51 @@ function showKunjunganStep1(){
         html+='<div class="form-group"><label>Filter Sales</label><select id="kunjSalesFilter" onchange="filterKunjunganCust()"></select></div>';
         _kunjSalesFilter='';
       }
-      html+='<div class="form-group"><select id="kunjCustomer" style="font-size:16px;padding:14px">';
+      html+='<div class="form-group"><select id="kunjCustomer" style="font-size:16px;padding:14px" onchange="cekStokTitipan()">';
       (r.data||[]).forEach(function(c){
         var nm=c.store_name||c.nama||'';
         var almt=c.address||c.alamat||'';
         html+='<option value="'+(c.customer_id||c.id)+'">'+nm+' - '+almt+' ['+(c.sales_name||c.sales_id||'')+']</option>';
       });
       html+='</select></div>';
-      html+='<button class="btn btn-primary" onclick="mulaiKunjungan()">Mulai Kunjungan</button></div>';
+      html+='<div id="stockCheckMsg" style="margin-bottom:8px"></div>';
+      html+='<button class="btn btn-primary" onclick="mulaiKunjungan()" id="btnMulaiKunjungan">Mulai Kunjungan</button></div>';
       el.innerHTML=html;
       loadSalesDropdown('kunjSalesFilter', '');
+      cekStokTitipan();
     });
+  });
+}
+function cekStokTitipan(){
+  var custId=document.getElementById('kunjCustomer').value;
+  var msgEl=document.getElementById('stockCheckMsg');
+  var btn=document.getElementById('btnMulaiKunjungan');
+  if(!custId||!msgEl||!btn)return;
+  msgEl.innerHTML='<span style="color:var(--text-light);font-size:13px">⏳ Cek stok titipan...</span>';
+  btn.disabled=true;
+  api('checkCustomerStock',{customer_id:custId},function(r){
+    if(!r.success||!r.data){msgEl.innerHTML='';btn.disabled=false;return}
+    if(r.data.hasStock){
+      msgEl.innerHTML='<span style="color:var(--success);font-size:13px">✅ Toko sudah punya stok titipan, bisa kunjungan</span>';
+      btn.disabled=false;
+    } else {
+      msgEl.innerHTML='<span style="color:#FF6F00;font-size:13px">⚠️ Toko ini belum dititipi. Minta Owner titip awal dulu.</span> '+
+        '<button class="btn btn-sm btn-warning" onclick="mintaTitipAwal()" style="margin-top:4px">📨 Minta Titip Awal ke Owner</button>';
+      btn.disabled=true;
+    }
+  });
+}
+function mintaTitipAwal(){
+  var custId=document.getElementById('kunjCustomer').value;
+  if(!custId)return;
+  var btn=document.getElementById('btnMulaiKunjungan');
+  api('requestTitipAwal',{customer_id:custId},function(r){
+    if(r.success){
+      toast(r.message||'✅ Permintaan dikirim ke Owner');
+      document.getElementById('stockCheckMsg').innerHTML='<span style="color:var(--success);font-size:13px">✅ Permintaan sudah dikirim, tunggu Owner memproses</span>';
+    } else {
+      toast(r.message||'Gagal kirim permintaan');
+    }
   });
 }
 
@@ -3923,7 +4051,7 @@ function mulaiKunjungan(){
       kunjunganState.longitude=lng;
       kunjunganState.loading = false;
       toast('✅ Kunjungan dimulai di ' + (r.data.customer.store_name || r.data.customer.customer_id) + ' 📍', 4000);
-      showKunjunganStep2();
+      showKunjunganCheckIn();
     });
   };
   if (navigator.geolocation) {
@@ -3960,23 +4088,119 @@ function showKunjunganStep2(){
     html+='</tr>';
   });
   html+='</tbody></table></div></div>';
-  html+='<div class="card"><h4>📸 Foto Display</h4><p style="font-size:12px;color:var(--text-light);margin-bottom:8px">Ambil foto rak produk dari kamera (lokasi otomatis terekam).</p>';
-  html+='<div style="display:flex;gap:16px;flex-wrap:wrap">';
-  html+='<div style="flex:1;min-width:140px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">🔴 Sebelum Restock</div><div id="camSebelum"><video id="videoSebelum" autoplay playsinline style="width:100%;border-radius:8px;background:#000;display:none"></video><div id="previewSebelum"></div></div><input type="file" accept="image/*" capture="environment" id="fileInputSebelum" style="display:none" onchange="handleFileFoto(\'sebelum\')"><button class="btn btn-sm btn-outline" style="margin-top:4px;width:100%" onclick="bukaCamera(\'sebelum\')">📷 Buka Kamera</button><button class="btn btn-sm btn-primary" style="margin-top:4px;display:none;width:100%" id="btnCaptureSebelum" onclick="captureFoto(\'sebelum\')">📸 Ambil</button><div id="fotoStatusSebelum" style="font-size:11px;margin-top:2px"></div></div>';
-  html+='<div style="flex:1;min-width:140px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">🟢 Sesudah Restock</div><div id="camSesudah"><video id="videoSesudah" autoplay playsinline style="width:100%;border-radius:8px;background:#000;display:none"></video><div id="previewSesudah"></div></div><input type="file" accept="image/*" capture="environment" id="fileInputSesudah" style="display:none" onchange="handleFileFoto(\'sesudah\')"><button class="btn btn-sm btn-outline" style="margin-top:4px;width:100%" onclick="bukaCamera(\'sesudah\')">📷 Buka Kamera</button><button class="btn btn-sm btn-primary" style="margin-top:4px;display:none;width:100%" id="btnCaptureSesudah" onclick="captureFoto(\'sesudah\')">📸 Ambil</button><div id="fotoStatusSesudah" style="font-size:11px;margin-top:2px"></div></div>';
-  html+='</div></div>';
   html+='<button class="btn btn-primary" onclick="simpanSisaStok()" style="margin-top:12px">Simpan & Lanjutkan</button>';
   el.innerHTML=html;
 }
 
-var _streamSebelum = null, _streamSesudah = null;
+var _streamSebelum = null, _streamSesudah = null, _streamCheckin = null;
 
 function stopAllCameraStreams() {
   if (_streamSebelum) { _streamSebelum.getTracks().forEach(function(t){t.stop()}); _streamSebelum = null; }
   if (_streamSesudah) { _streamSesudah.getTracks().forEach(function(t){t.stop()}); _streamSesudah = null; }
+  if (_streamCheckin) { _streamCheckin.getTracks().forEach(function(t){t.stop()}); _streamCheckin = null; }
 }
 
 function stopCamera() { stopAllCameraStreams(); }
+
+function showKunjunganCheckIn(){
+  stopAllCameraStreams();
+  kunjunganState.checkinDone = false;
+  var el = document.getElementById('kunjunganContent');
+  var html = '<div class="card"><h4>📸 Foto Check-In</h4><p style="font-size:13px;color:var(--text-light);margin-bottom:8px">Ambil foto display sebagai bukti check-in, lalu lanjutkan mencatat stok.</p>';
+  html += '<div id="checkinCamSection">';
+  html += '<video id="videoCheckin" autoplay playsinline style="width:100%;max-width:320px;border-radius:8px;background:#000;display:none"></video>';
+  html += '<div id="previewCheckin"></div>';
+  html += '<input type="file" accept="image/*" capture="environment" id="fileInputCheckin" style="display:none" onchange="handleFileCheckin()">';
+  html += '<button class="btn btn-outline" style="margin-top:8px" onclick="bukaCameraCheckin()">📷 Buka Kamera</button>';
+  html += '<button class="btn btn-primary" style="margin-top:8px;display:none" id="btnCaptureCheckin" onclick="captureCheckin()">📸 Ambil Foto</button>';
+  html += '<div id="fotoStatusCheckin" style="font-size:12px;margin-top:4px"></div>';
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+function bukaCameraCheckin(){
+  var vid = document.getElementById('videoCheckin');
+  if (!vid) return;
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+      .then(function(s) {
+        _streamCheckin = s;
+        vid.srcObject = s;
+        vid.style.display = 'block';
+        document.getElementById('btnCaptureCheckin').style.display = 'inline-block';
+        vid.play();
+      })
+      .catch(function(e) {
+        var el = document.getElementById('fileInputCheckin');
+        if (el) el.click();
+        else document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--error)">Kamera tidak tersedia</span>';
+      });
+  } else {
+    var el = document.getElementById('fileInputCheckin');
+    if (el) el.click();
+    else document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--error)">Kamera tidak didukung</span>';
+  }
+}
+
+function captureCheckin(){
+  var vid = document.getElementById('videoCheckin');
+  if (!vid || !vid.videoWidth) { document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--error)">Kamera belum aktif</span>'; return; }
+  var canvas = document.createElement('canvas');
+  canvas.width = vid.videoWidth;
+  canvas.height = vid.videoHeight;
+  canvas.getContext('2d').drawImage(vid, 0, 0);
+  var dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+  document.getElementById('previewCheckin').innerHTML = '<img src="'+dataUrl+'" style="max-width:120px;max-height:120px;border-radius:8px;border:2px solid var(--success)">';
+  if (_streamCheckin) { _streamCheckin.getTracks().forEach(function(t){t.stop()}); _streamCheckin = null; }
+  vid.style.display = 'none';
+  document.getElementById('btnCaptureCheckin').style.display = 'none';
+  document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--text-light)">Mendapatkan lokasi GPS...</span>';
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      function(pos) { uploadCheckinFoto(dataUrl, pos.coords.latitude, pos.coords.longitude); },
+      function() { uploadCheckinFoto(dataUrl, '', ''); },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  } else {
+    uploadCheckinFoto(dataUrl, '', '');
+  }
+}
+
+function handleFileCheckin(){
+  var input = document.getElementById('fileInputCheckin');
+  if (!input || !input.files || !input.files[0]) return;
+  var file = input.files[0];
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+    document.getElementById('previewCheckin').innerHTML = '<img src="'+dataUrl+'" style="max-width:120px;max-height:120px;border-radius:8px;border:2px solid var(--success)">';
+    document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--text-light)">Mendapatkan lokasi GPS...</span>';
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        function(pos) { uploadCheckinFoto(dataUrl, pos.coords.latitude, pos.coords.longitude); },
+        function() { uploadCheckinFoto(dataUrl, '', ''); },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    } else {
+      uploadCheckinFoto(dataUrl, '', '');
+    }
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+function uploadCheckinFoto(dataUrl, lat, lng){
+  document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--text-light)">Mengupload...</span>';
+  api('uploadFotoKunjungan', { kunjunganId: kunjunganState.kunjunganId, tipe: 'sebelum', dataUrl: dataUrl, latitude: lat, longitude: lng }, function(r) {
+    if (!r.success) {
+      document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--error)">Gagal upload: ' + (r.message || '') + '</span>';
+      return;
+    }
+    document.getElementById('fotoStatusCheckin').innerHTML = '<span style="color:var(--success)">✅ Foto check-in berhasil</span>';
+    kunjunganState.checkinDone = true;
+    setTimeout(function() { showKunjunganStep2(); }, 800);
+  }, 30000);
+}
 
 function bukaCamera(tipe) {
   var videoId = 'video' + (tipe==='sesudah'?'Sesudah':'Sebelum');
@@ -4093,13 +4317,43 @@ function simpanSisaStok(){
 
 function showKunjunganStep3(){
   var el=document.getElementById('kunjunganContent');
-  var html='<div class="card"><h4>Finalisasi Kunjungan</h4>';
-  html+='<p style="margin:12px 0;color:var(--text-light)">Kunjungan siap difinalisasi. Sistem akan menghitung stok terjual dan membuat invoice otomatis.</p>';
+  var cust=kunjunganState.customer||{};
+  var produk=kunjunganState.produk||[];
+  var html='<div class="card"><h4>📸 Foto Sesudah Restock</h4><p style="font-size:12px;color:var(--text-light);margin-bottom:8px">Ambil foto rak produk sebagai bukti setelah transaksi sebelum finalisasi.</p>';
+  html+='<div style="flex:1;min-width:140px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">🟢 Sesudah Restock</div><div id="camSesudah"><video id="videoSesudah" autoplay playsinline style="width:100%;border-radius:8px;background:#000;display:none"></video><div id="previewSesudah"></div></div><input type="file" accept="image/*" capture="environment" id="fileInputSesudah" style="display:none" onchange="handleFileFoto(\'sesudah\')"><button class="btn btn-sm btn-outline" style="margin-top:4px;width:100%" onclick="bukaCamera(\'sesudah\')">📷 Buka Kamera</button><button class="btn btn-sm btn-primary" style="margin-top:4px;display:none;width:100%" id="btnCaptureSesudah" onclick="captureFoto(\'sesudah\')">📸 Ambil</button><div id="fotoStatusSesudah" style="font-size:11px;margin-top:2px"></div></div>';
+  html+='<div class="card" style="margin-top:12px"><h4>Finalisasi Kunjungan</h4>';
+  if (cust.store_name) {
+    html+='<p style="margin:4px 0;font-size:14px"><strong>Toko:</strong> '+(cust.store_name||'')+'</p>';
+  }
+  if (produk.length>0) {
+    var totalTerjual=0, totalRetur=0, totalRusak=0;
+    html+='<div style="overflow-x:auto;margin:12px 0"><table><thead><tr><th>Produk</th><th>Stok Awal</th><th>Sisa Fisik</th><th>Rusak</th><th>Retur</th><th>Terjual</th><th>Restock</th></tr></thead><tbody>';
+    produk.forEach(function(p){
+      totalTerjual+=p.terjual||0; totalRetur+=p.retur||0; totalRusak+=p.rusak||0;
+      html+='<tr><td>'+(p.nama_produk||'')+'</td><td>'+(p.stok_awal||0)+'</td><td>'+(p.sisa_fisik||0)+'</td><td>'+(p.rusak||0)+'</td><td>'+(p.retur||0)+'</td><td><strong>'+(p.terjual||0)+'</strong></td><td>'+(p.rekomendasi_restock||0)+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0;font-size:13px;text-align:center">';
+    html+='<div style="background:#E8F5E9;padding:8px;border-radius:8px"><strong>Total Terjual</strong><br><span style="font-size:18px;color:#2E7D32">'+totalTerjual+'</span></div>';
+    html+='<div style="background:#FFF3E0;padding:8px;border-radius:8px"><strong>Total Retur</strong><br><span style="font-size:18px;color:#E65100">'+totalRetur+'</span></div>';
+    html+='<div style="background:#FFEBEE;padding:8px;border-radius:8px"><strong>Total Rusak</strong><br><span style="font-size:18px;color:#C62828">'+totalRusak+'</span></div>';
+    html+='</div>';
+    if (totalRetur>0) {
+      html+='<div style="background:#FFF8E1;padding:10px 12px;border-radius:8px;margin:8px 0;font-size:13px">🔄 Ada <strong>'+totalRetur+' pcs retur</strong> dari produk ini. Barang retur akan dikembalikan ke stok gudang.</div>';
+    }
+  }
+  html+='<p style="margin:12px 0;color:var(--text-light);font-size:13px">Kunjungan siap difinalisasi. Sistem akan menghitung stok terjual dan membuat invoice otomatis. Pastikan data di atas sudah benar.</p>';
   html+='<button class="btn btn-success" onclick="finalisasiKunjungan()">Finalisasi Kunjungan</button></div>';
   el.innerHTML=html;
 }
 
 function finalisasiKunjungan(){
+  var previewSesudah=document.getElementById('previewSesudah');
+  var adaFoto=previewSesudah&&previewSesudah.innerHTML&&previewSesudah.innerHTML.includes('<img');
+  if(!adaFoto){
+    toast('⚠️ Ambil foto display dulu sebagai bukti kunjungan');
+    return;
+  }
   var el=document.getElementById('kunjunganContent');
   el.innerHTML='<div class="loading">Memfinalisasi...</div>';
   api('finalizeKunjungan',{kunjunganId:kunjunganState.kunjunganId},function(r){
@@ -4506,7 +4760,7 @@ function loadNotifPanel(){
     var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong style="font-size:14px">Notifikasi</strong><span style="font-size:11px;color:var(--text-light)">'+data.length+' total</span></div>';
     data.slice(0,20).forEach(function(n){
       var isRead=n.is_read==='true'||n.is_read===true;
-      html+='<div style="padding:10px;border-radius:8px;margin-bottom:4px;background:'+(isRead?'':'#FFF3E0')+';cursor:pointer" onclick="clickNotif(\''+n.notifikasi_id+'\')">';
+      html+='<div style="padding:10px;border-radius:8px;margin-bottom:4px;background:'+(isRead?'':'#FFF3E0')+';cursor:pointer" onclick="clickNotif(\''+n.notifikasi_id+'\',\''+(n.link||'').replace(/'/g,"\\'")+'\')">';
       html+='<div style="font-size:12px;font-weight:600">'+n.tipe+'</div>';
       html+='<div style="font-size:13px;margin:2px 0">'+(n.judul||'')+'</div>';
       html+='<div style="font-size:11px;color:var(--text-light)">'+(n.pesan||'').substring(0,80)+'</div>';
@@ -4516,8 +4770,28 @@ function loadNotifPanel(){
     loadNotifCount();
   });
 }
-function clickNotif(id){
-  api('markNotifRead',{notifId:id},function(){loadNotifCount();loadNotifPanel();});
+function clickNotif(id, link){
+  api('markNotifRead',{notifId:id},function(){
+    loadNotifCount();
+    loadNotifPanel();
+    if(link){
+      try{
+        var parts=link.split('?');
+        if(parts.length>1){
+          var params=new URLSearchParams(parts[1]);
+          var page=params.get('page');
+          if(page){switchTab(page);}
+          var custId=params.get('customer_id');
+          if(page==='titipan'&&custId){
+            setTimeout(function(){
+              var sel=document.getElementById('fTitipCust');
+              if(sel){sel.value=custId;toast('Toko sudah dipilih, silakan isi keranjang titipan');}
+            },800);
+          }
+        }
+      }catch(e){}
+    }
+  });
 }
 
 // ====== STOK & PRODUKSI PAGE ======
@@ -4644,6 +4918,16 @@ function initTitipan(){
       api('getCustomers',{},function(rCust){
         _allCustomers = (rCust.success&&rCust.data)?rCust.data:[];
         renderTitipPage();
+        setTimeout(function(){
+          try{
+            var p=new URLSearchParams(window.location.search);
+            var preCust=p.get('customer_id');
+            if(preCust){
+              var sel=document.getElementById('fTitipCust');
+              if(sel){sel.value=preCust;toast('Toko dari notifikasi sudah dipilih');}
+            }
+          }catch(e){}
+        },500);
       });
     });
   });
@@ -4773,6 +5057,7 @@ function simpanTitipCart(){
     if(!r.success){el.innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';if(btnEl)btnEl.disabled=false;return}
     el.innerHTML='<p style="color:var(--success);font-weight:600">✅ '+r.message+'</p>'+
       '<div style="margin-top:12px"><button class="btn btn-primary" onclick="printSuratJalan(\''+r.data.id+'\')">🖨️ Cetak Surat Jalan</button></div>';
+    api('fulfillTitipRequest',{customer_id:customerId});
     _titipCart=[];
     renderCart();
     invalidateCache('titipan'); toast('Titipan berhasil');
@@ -5707,7 +5992,8 @@ function loadStockPredictions(containerId){
     r.data.forEach(function(s){
       var color = s.status==='kritis'?'#C62828':'#F57F17';
       var badge = s.status==='kritis'?'🔴':'🟡';
-      var hari = s.days_until_empty===999?'?':s.days_until_empty;
+      var daysVal = s.estimated_days_left !== undefined ? s.estimated_days_left : s.days_until_empty;
+      var hari = daysVal===999?'?':daysVal;
       html += '<div class="reminder-card" style="border-left-color:'+color+'">'+
         '<div class="info"><div class="name">'+(s.store_name||'')+' — '+(s.produk_name||'')+'</div>'+
         '<div class="meta">Sisa: '+s.qty_sisa+' | Rata-rata: '+s.daily_avg_sales+'/hari | Sales: '+(s.sales_name||'-')+'</div></div>'+
@@ -5720,7 +6006,7 @@ function loadStockPredictions(containerId){
 
 // ====== LAPORAN PAGE ======
 function initLaporan() {
-  var html = '<h3>📈 Laporan (16 Jenis)</h3><div id="laporanFilter" style="margin-bottom:12px"></div>';
+  var html = '<h3>📈 Laporan (17 Jenis)</h3><div id="laporanFilter" style="margin-bottom:12px"></div>';
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:12px">';
   var reports = [
     {type:'penjualan_harian',icon:'📅',label:'Penjualan Harian'},{type:'penjualan_bulanan',icon:'📊',label:'Penjualan Bulanan'},
@@ -5730,7 +6016,8 @@ function initLaporan() {
     {type:'komisi',icon:'🏆',label:'Komisi'},{type:'retur',icon:'🔄',label:'Retur'},
     {type:'laba_kotor',icon:'📈',label:'Laba Kotor'},{type:'laba_bersih',icon:'📉',label:'Laba Bersih'},
     {type:'omzet',icon:'💵',label:'Omzet Report'},{type:'stok_gudang',icon:'🏭',label:'Stok Gudang'},
-    {type:'stok_konsinyasi',icon:'📋',label:'Stok Konsinyasi'},{type:'forecast_restock',icon:'🚚',label:'Forecast Restock'}
+    {type:'stok_konsinyasi',icon:'📋',label:'Stok Konsinyasi'},{type:'forecast_restock',icon:'🚚',label:'Forecast Restock'},
+    {type:'kunjungan_harian',icon:'📅',label:'Kunjungan Harian'}
   ];
   reports.forEach(function(r){
     html += '<div class="card" style="cursor:pointer;text-align:center;padding:12px 8px" onclick="genLaporan(\''+r.type+'\')"><div style="font-size:24px;margin-bottom:4px">'+r.icon+'</div><div style="font-weight:600;font-size:12px">'+r.label+'</div></div>';
@@ -5759,6 +6046,7 @@ function renderLaporan(el, type, data) {
     case 'stok_gudang': title='🏭 Stok Gudang';headers=['Produk','Batch','Masuk','Keluar','Sisa'];arr.forEach(function(s){rows.push([s.produk_nama||s.produk_id||'',s.batch||'',s.qty_masuk||0,s.qty_keluar||0,s.qty_sisa||0])});break;
     case 'stok_konsinyasi': title='📋 Stok Konsinyasi';headers=['Customer','Produk','Awal','Terjual','Sisa'];arr.forEach(function(s){rows.push([s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.qty_titip_awal||0,s.qty_terjual||0,s.qty_sisa||0])});break;
     case 'forecast_restock': title='🚚 Forecast Restock';headers=['Customer','Produk','Sisa','Target','Restock'];arr.forEach(function(s){rows.push([s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.sisa_stok||0,s.target_display||0,s.rekomendasi_restock||0])});break;
+    case 'kunjungan_harian': title='📅 Kunjungan Harian';headers=['Sales','Toko','Jam Mulai','Jam Selesai','Status','Invoice'];arr.forEach(function(v){rows.push([v.sales_nama||'',v.customer_nama||'',v.jam_mulai||'',v.jam_selesai||'',v.status||'','Rp '+fmt(v.total_invoice||0)])});break;
   }
   if (rows.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Tidak ada data.</p></div>'; return; }
   var html = '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">'+
@@ -5807,7 +6095,8 @@ function downloadCSV(type) {
       omzet: {t:'Omzet',h:['Item','Nilai'],f:function(d){return[['Omzet','Rp '+fmt((d||{}).omzet||0)],['Bulan Ini','Rp '+fmt((d||{}).bulan_ini||0)],['Tahun Ini','Rp '+fmt((d||{}).tahun_ini||0)],['Rata-rata','Rp '+fmt((d||{}).rata_rata||0)]]}},
       stok_gudang: {t:'Stok Gudang',h:['Produk','Masuk','Keluar','Sisa'],f:function(s){return[s.produk_nama||s.produk_id||'',s.total_masuk||0,s.total_keluar||0,s.total_sisa||0]}},
       stok_konsinyasi: {t:'Stok Konsinyasi',h:['Customer','Produk','Awal','Terjual','Retur','Sisa'],f:function(s){return[s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.qty_titip_awal||0,s.qty_terjual||0,s.qty_retur||0,s.qty_sisa||0]}},
-      forecast_restock: {t:'Forecast Restock',h:['Customer','Produk','Sisa','Target','Restock'],f:function(s){return[s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.sisa_stok||0,s.target_display||0,s.rekomendasi_restock||0]}}
+      forecast_restock: {t:'Forecast Restock',h:['Customer','Produk','Sisa','Target','Restock'],f:function(s){return[s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.sisa_stok||0,s.target_display||0,s.rekomendasi_restock||0]}},
+      kunjungan_harian: {t:'Kunjungan Harian',h:['Sales','Toko','Jam Mulai','Jam Selesai','Status','Invoice'],f:function(v){return[v.sales_nama||'',v.customer_nama||'',v.jam_mulai||'',v.jam_selesai||'',v.status||'','Rp '+fmt(v.total_invoice||0)]}}
     };
     var m = mapping[type];
     if (m) { title = m.t; headers = m.h; arr.forEach(function(item) { var r = m.f(item); if (Array.isArray(r[0])) { r.forEach(function(sub){rows.push(sub)}) } else { rows.push(r) } }); }

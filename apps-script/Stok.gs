@@ -95,6 +95,14 @@ var StokService = {
     return respond(true, 'Stok konsinyasi dihapus', null);
   },
 
+  checkCustomerStock: function(params, session) {
+    var all = getDataAsObjects('10_STOK_KONSINYASI');
+    var custId = params.customer_id;
+    if (!custId) return respond(true, '', { hasStock: false });
+    var hasStock = all.some(function(s) { return s.customer_id === custId; });
+    return respond(true, '', { hasStock: hasStock });
+  },
+
   getRekapStokKonsinyasi: function(session) {
     var all = getDataAsObjects('10_STOK_KONSINYASI');
     var sales = getDataAsObjects('02_SALES');
