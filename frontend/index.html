@@ -1386,9 +1386,9 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
     if (!invErr && inv) {
       // Generate custom invoice number: INV-YYYYMMDD-XXXX (counter reset per bulan)
       try {
-        var d = new Date();
-        var ds = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
-        var ck = 'inv_counter_' + d.getFullYear() + String(d.getMonth()+1).padStart(2,'0');
+        var dt = new Date();
+        var ds = dt.getFullYear() + String(dt.getMonth()+1).padStart(2,'0') + String(dt.getDate()).padStart(2,'0');
+        var ck = 'inv_counter_' + dt.getFullYear() + String(dt.getMonth()+1).padStart(2,'0');
         var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
         var cnt = cr ? (parseInt(cr.value) + 1) : 1;
         var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
