@@ -866,6 +866,18 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
     var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status: invStatus, invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() }).select().single();
     if (!invErr && inv) {
       invoiceId = inv.id;
+      try {
+        var d = new Date();
+        var ds = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+        var ck = 'inv_counter_' + ds;
+        var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
+        var cnt = cr ? (parseInt(cr.value) + 1) : 1;
+        var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
+        if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
+        else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
+        await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+        inv.invoice_number = invNum;
+      } catch(e) {}
       for (var dd of details || []) {
         if (dd.sold > 0) {
           var { data: prod } = await _supabase.from('products').select('hpp').eq('id', dd.product_id).single();

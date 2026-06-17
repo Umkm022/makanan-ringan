@@ -1384,6 +1384,19 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
     var invStatus = paymentAmount >= invoiceTotal ? 'PAID' : 'OPEN';
     var { data: inv, error: invErr } = await _supabase.from('invoices').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, total: invoiceTotal, status: invStatus, invoice_date: new Date().toISOString(), due_date: jatuhTempo.toISOString() }).select().single();
     if (!invErr && inv) {
+      // Generate custom invoice number: INV-YYYYMMDD-XXXX
+      try {
+        var d = new Date();
+        var ds = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+        var ck = 'inv_counter_' + ds;
+        var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
+        var cnt = cr ? (parseInt(cr.value) + 1) : 1;
+        var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
+        if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
+        else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
+        await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+        inv.invoice_number = invNum;
+      } catch(e) { /* non-critical, continue */ }
       invoiceId = inv.id;
       for (var dd of details || []) {
         if (dd.sold > 0) {
@@ -6009,6 +6022,9 @@ function loadInvList() {
   });
 }
 
+function invDisplay(inv){
+  return inv.invoice_number || (inv.id||'').substring(0,8);
+}
 function renderInvTable(el, data) {
   if (data.length === 0) {
     el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Belum ada invoice.</p></div>';
@@ -6017,7 +6033,7 @@ function renderInvTable(el, data) {
   var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Tgl</th><th>Customer</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>';
   data.forEach(function(inv) {
     var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : '';
-    html += '<tr><td>' + (inv.id || '') + '</td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
+    html += '<tr><td><strong>' + invDisplay(inv) + '</strong></td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
     var st = (inv.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td>';
@@ -6042,7 +6058,7 @@ function showInvoiceDetail(id) {
     var st = (inv.status || '').toUpperCase();
     var totalBayar = payments.reduce(function(s, p) { return s + (p.amount || 0); }, 0);
     html = '<div class="invoice-print-area">';
-    html += '<div style="text-align:center;margin-bottom:16px"><h3 style="margin:0">📄 Detail Invoice</h3><div style="font-size:12px;color:var(--text-light)">' + id + '</div></div>';
+    html += '<div style="text-align:center;margin-bottom:16px"><h3 style="margin:0">📄 Detail Invoice</h3><div style="font-size:12px;color:var(--text-light)">' + (inv.invoice_number || id) + '</div></div>';
     html += '<div class="card" style="margin-bottom:12px"><table style="width:100%"><tbody>';
     html += '<tr><td style="padding:4px 8px;font-weight:600;width:120px">Tanggal</td><td>' + tgl + '</td></tr>';
     html += '<tr><td style="padding:4px 8px;font-weight:600">Customer</td><td>' + (cust.store_name || cust.name || inv.customer_id || '-') + '</td></tr>';
@@ -6110,7 +6126,7 @@ function thermalPrintInvoice(){
   if ((inv.thermal_show_address !== 'false' && inv.thermal_show_address !== false)) {
     printContent += '<div style="font-size:10px;color:#666;margin-bottom:4px">Jl. Contoh No. 123, Kota</div>';
   }
-  printContent += '<div style="font-size:12px;margin-bottom:4px">Invoice: ' + (inv.id || '').substring(0,8) + '</div>';
+  printContent += '<div style="font-size:12px;margin-bottom:4px">Invoice: ' + (inv.invoice_number || (inv.id||'').substring(0,8)) + '</div>';
   printContent += '<div style="font-size:11px;color:#666">' + tgl + '</div>';
   printContent += '</div>';
   printContent += '<hr style="border-top:1px dashed #000;margin:8px 0">';
@@ -6171,11 +6187,12 @@ function renderPiutangTable(el, data) {
     el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Tidak ada piutang aktif.</p></div>';
     return;
   }
-  var html = '<div style="overflow-x:auto"><table><thead><tr><th>Piutang</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
+  var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
   data.forEach(function(p) {
     var jt = p.due_date ? p.due_date.substring(0, 10) : '';
     var overdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'PAID';
-    html += '<tr><td>' + (p.id || '') + '</td><td>' + ((p.customers && p.customers.store_name) || p.customer_id || '') + '</td><td>Rp ' + fmt(p.total || 0) + '</td>';
+    var invNo = (p.invoices && p.invoices.invoice_number) || (p.invoice_id||'').substring(0,8);
+    html += '<tr><td><strong>' + invNo + '</strong></td><td>' + ((p.customers && p.customers.store_name) || p.customer_id || '') + '</td><td>Rp ' + fmt(p.total || 0) + '</td>';
     html += '<td><strong>Rp ' + fmt(p.remaining || 0) + '</strong></td>';
     html += '<td style="color:' + (overdue ? 'var(--error)' : 'inherit') + '">' + jt + '</td>';
     var st = (p.status || '').toUpperCase();
@@ -6257,11 +6274,12 @@ function loadPiutangAktif(){
     var html='<div class="card"><h4>Piutang Aktif</h4>';
     if(!data.length){html+='<p style="color:var(--text-light);padding:8px 0">Tidak ada piutang aktif.</p>';}
     else{
-      html+='<div style="overflow-x:auto"><table><thead><tr><th>Piutang</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
+      html+='<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
       data.forEach(function(p){
         var jt=p.due_date?p.due_date.substring(0,10):'';
         var overdue=p.due_date&&new Date(p.due_date)<new Date()&&p.status!=='PAID';
-        html+='<tr><td>'+(p.id||'')+'</td><td>'+((p.customers&&p.customers.store_name)||p.customer_id||'')+'</td><td>Rp '+fmt(p.total||0)+'</td>';
+        var invNo=(p.invoices&&p.invoices.invoice_number)||(p.invoice_id||'').substring(0,8);
+        html+='<tr><td><strong>'+invNo+'</strong></td><td>'+((p.customers&&p.customers.store_name)||p.customer_id||'')+'</td><td>Rp '+fmt(p.total||0)+'</td>';
         html+='<td><strong>Rp '+fmt(p.remaining||0)+'</strong></td><td style="color:'+(overdue?'var(--error)':'inherit')+'">'+jt+'</td>';
         var st=(p.status||'').toUpperCase();
         html+='<td><span class="badge-'+(st==='PAID'?'success':st==='PARTIAL'?'warning':'danger')+'">'+st+'</span></td>';
