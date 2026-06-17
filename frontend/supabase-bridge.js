@@ -869,7 +869,7 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
       try {
         var d = new Date();
         var ds = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
-        var ck = 'inv_counter_' + ds;
+        var ck = 'inv_counter_' + d.getFullYear() + String(d.getMonth()+1).padStart(2,'0');
         var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
         var cnt = cr ? (parseInt(cr.value) + 1) : 1;
         var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
