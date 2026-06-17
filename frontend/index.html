@@ -6119,7 +6119,8 @@ function thermalPrintInvoice(){
     var fontSize = settings.thermal_font || '12';
     var margin = settings.thermal_margin || '5';
     var width = paper === '58mm' ? '58mm' : '80mm';
-    var w = document.open();
+    var w = window.open('', '_blank');
+    if (!w) { toast('Popup diblokir. Izinkan popup untuk halaman ini.'); return; }
     w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Print Invoice</title>');
     w.document.write('<style>');
     w.document.write('*{margin:0;padding:0;box-sizing:border-box}');
