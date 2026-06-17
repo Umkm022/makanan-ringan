@@ -514,6 +514,30 @@ bridge._actions['deleteProduk'] = async (params) => {
 // CATEGORY ACTIONS
 // ═══════════════════════════════════════════════════════════════════
 
+bridge._actions['getCustomerGroups'] = async () => {
+  const { data } = await _supabase.from('customer_groups').select('*, customers:customers(count)').order('name');
+  return ok((data||[]).map(function(g){ g.customer_count = (g.customers||[])[0]?.count || 0; delete g.customers; return g; }));
+};
+bridge._actions['createCustomerGroup'] = async (params) => {
+  const d = params.data || params;
+  const { data, error } = await _supabase.from('customer_groups').insert({ name: d.nama_grup, description: d.deskripsi }).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Grup berhasil dibuat');
+};
+bridge._actions['updateCustomerGroup'] = async (params) => {
+  const d = params.data || params;
+  const { data, error } = await _supabase.from('customer_groups').update({ name: d.nama_grup, description: d.deskripsi }).eq('id', d.id).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Grup berhasil diupdate');
+};
+bridge._actions['deleteCustomerGroup'] = async (params) => {
+  const { count } = await _supabase.from('customers').select('*', { count: 'exact', head: true }).eq('group_id', params.id);
+  if (count && count > 0) return fail('Tidak bisa dihapus — masih ada ' + count + ' customer menggunakan grup ini');
+  const { error } = await _supabase.from('customer_groups').delete().eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Grup berhasil dihapus');
+};
+
 bridge._actions['getKategori'] = async () => {
   const { data } = await _supabase.from('categories').select('*');
   return ok(data);
@@ -1132,6 +1156,16 @@ bridge._actions['getInvoices'] = async (params) => {
   }
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
+};
+
+bridge._actions['getInvoiceDetail'] = async (params) => {
+  const d = params?.data || params;
+  if (!d.id) return fail('id invoice diperlukan');
+  const { data: inv, error } = await _supabase.from('invoices').select('*, customers(*), sales(*)').eq('id', d.id).single();
+  if (error) return fail(error.message);
+  const { data: payments } = await _supabase.from('payments').select('*').eq('invoice_id', d.id).order('payment_date', { ascending: false });
+  const { data: receivables } = await _supabase.from('receivables').select('*').eq('invoice_id', d.id);
+  return ok({ invoice: inv, payments: payments || [], receivables: receivables || [] });
 };
 
 bridge._actions['getPiutang'] = async () => {

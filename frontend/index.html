@@ -439,7 +439,7 @@ body.sales-layout .tabbar{display:flex !important}
 /* Print / PDF */
 @media print {
   body{background:#fff!important;padding:0!important;color:#000}
-  .topnav,.tabbar,.sidebar,.erp-topbar,.sidebar-toggle,.bottom-spacer,.toast,.btn,.topnav-btn,.topnav-user,#notifBell,#notifBell2,#notifBadge,#notifBadge2,.sidebar-overlay{display:none!important}
+  .topnav,.tabbar,.sidebar,.erp-topbar,.sidebar-toggle,.bottom-spacer,.toast,.btn,.topnav-btn,.topnav-user,#notifBell,#notifBell2,#notifBadge,#notifBadge2,.sidebar-overlay,.modal-overlay{display:none!important}
   .content,.erp-content{padding:0!important;margin:0!important}
   .main-area{margin-left:0!important}
   .card{box-shadow:none!important;border:1px solid #ddd;break-inside:avoid;page-break-after:always}
@@ -449,6 +449,9 @@ body.sales-layout .tabbar{display:flex !important}
   .kpi-card{box-shadow:none!important;border:1px solid #ddd}
   .dark .card{background:#fff!important;color:#000!important}
   .dark td,.dark th{border-bottom-color:#ccc!important}
+  .modal-content{position:static!important;transform:none!important;max-width:100%!important;box-shadow:none!important;border:none!important;padding:0!important;margin:0!important}
+  .invoice-print-area{display:block!important}
+  .invoice-print-area .btn{display:none!important}
 }
 
 /* Utility classes */
@@ -656,7 +659,7 @@ const customerMap = {
   phone: 'phone', address: 'address', kota: 'city', kecamatan: 'district',
   status: 'status', tipe_toko: 'store_type', limit_piutang: 'credit_limit',
   tempo_pembayaran: 'payment_term', notes: 'notes', sales_id: 'sales_id',
-  latitude: 'latitude', longitude: 'longitude'
+  latitude: 'latitude', longitude: 'longitude', group_id: 'group_id'
 };
 const salesMap = {
   sales_id: 'id', sales_code: 'code', full_name: 'full_name',
@@ -1026,6 +1029,30 @@ bridge._actions['deleteProduk'] = async (params) => {
 // ═══════════════════════════════════════════════════════════════════
 // CATEGORY ACTIONS
 // ═══════════════════════════════════════════════════════════════════
+
+bridge._actions['getCustomerGroups'] = async () => {
+  const { data } = await _supabase.from('customer_groups').select('*, customers:customers(count)').order('name');
+  return ok((data||[]).map(function(g){ g.customer_count = (g.customers||[])[0]?.count || 0; delete g.customers; return g; }));
+};
+bridge._actions['createCustomerGroup'] = async (params) => {
+  const d = params.data || params;
+  const { data, error } = await _supabase.from('customer_groups').insert({ name: d.nama_grup, description: d.deskripsi }).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Grup berhasil dibuat');
+};
+bridge._actions['updateCustomerGroup'] = async (params) => {
+  const d = params.data || params;
+  const { data, error } = await _supabase.from('customer_groups').update({ name: d.nama_grup, description: d.deskripsi }).eq('id', d.id).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Grup berhasil diupdate');
+};
+bridge._actions['deleteCustomerGroup'] = async (params) => {
+  const { count } = await _supabase.from('customers').select('*', { count: 'exact', head: true }).eq('group_id', params.id);
+  if (count && count > 0) return fail('Tidak bisa dihapus — masih ada ' + count + ' customer menggunakan grup ini');
+  const { error } = await _supabase.from('customer_groups').delete().eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Grup berhasil dihapus');
+};
 
 bridge._actions['getKategori'] = async () => {
   const { data } = await _supabase.from('categories').select('*');
@@ -1645,6 +1672,16 @@ bridge._actions['getInvoices'] = async (params) => {
   }
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
+};
+
+bridge._actions['getInvoiceDetail'] = async (params) => {
+  const d = params?.data || params;
+  if (!d.id) return fail('id invoice diperlukan');
+  const { data: inv, error } = await _supabase.from('invoices').select('*, customers(*), sales(*)').eq('id', d.id).single();
+  if (error) return fail(error.message);
+  const { data: payments } = await _supabase.from('payments').select('*').eq('invoice_id', d.id).order('payment_date', { ascending: false });
+  const { data: receivables } = await _supabase.from('receivables').select('*').eq('invoice_id', d.id);
+  return ok({ invoice: inv, payments: payments || [], receivables: receivables || [] });
 };
 
 bridge._actions['getPiutang'] = async () => {
@@ -3255,10 +3292,13 @@ function buildTabs(role){
     tabs.push({id:'produk',label:'Produk',icon:'📦'});
     tabs.push({id:'kategori',label:'Kategori',icon:'📂'});
     tabs.push({id:'customer',label:'Customer',icon:'👥'});
+    tabs.push({id:'customer-groups',label:'Grup Customer',icon:'👪'});
     tabs.push({id:'sales-list',label:'Sales',icon:'👤'});
     tabs.push({id:'kunjungan',label:'Kunjungan',icon:'🚗'});
     tabs.push({id:'invoice',label:'Invoice',icon:'💰'});
+    tabs.push({id:'piutang',label:'Piutang',icon:'💳'});
     tabs.push({id:'stok-produksi',label:'Stok',icon:'🏭'});
+    tabs.push({id:'produksi',label:'Produksi',icon:'🏗️'});
     tabs.push({id:'titipan',label:'Titipan',icon:'📤'});
     tabs.push({id:'biaya',label:'Biaya',icon:'💸'});
     tabs.push({id:'komisi',label:'Komisi',icon:'🏆'});
@@ -3319,7 +3359,7 @@ function activateTab(id){
   // Update page title
   var titleEl=document.getElementById('pageTitle');
   if(titleEl){
-    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','kategori':'📂 Kategori','customer':'👥 Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','stok-produksi':'🏭 Stok','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
+    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','kategori':'📂 Kategori','customer':'👥 Customer','customer-groups':'👪 Grup Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','piutang':'💳 Piutang','stok-produksi':'🏭 Stok','produksi':'🏗️ Produksi','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
     titleEl.textContent=labels[id]||'📊 Dashboard';
   }
 }
@@ -3460,8 +3500,11 @@ function afterPageLoad(id){
    else if(id==='customer')initCustomer();
   else if(id==='kunjungan')initKunjungan('OWNER');
   else if(id==='setup-data')initSetupData();
-  else if(id==='invoice')initInvoice();
-  else if(id==='laporan')initLaporan();
+   else if(id==='invoice')initInvoice();
+   else if(id==='piutang')initPiutang();
+   else if(id==='produksi')initProduksiPage();
+   else if(id==='customer-groups')initCustomerGroups();
+   else if(id==='laporan')initLaporan();
   else if(id==='visit')initVisit();
   else if(id==='history')initRiwayatSales();
   else if(id==='stok-produksi')initStokProduksi();
@@ -3636,6 +3679,12 @@ function loadSalesDropdown(selectId, selectedValue, callback) {
     if (r.success) setCached('salesList', r);
     if (selectId) populateSelect(selectId, (r.data||[]), 'sales_id', 'full_name', 'nama', selectedValue, 'Semua Sales');
     if (callback) callback();
+  });
+}
+
+function loadCustomerGroupDropdown(selectId, selectedValue) {
+  api('getCustomerGroups', {}, function(r) {
+    if (selectId) populateSelect(selectId, (r.data||[]), 'id', 'name', 'name', selectedValue, '');
   });
 }
 
@@ -4359,6 +4408,7 @@ function showCustomerForm(c){
   html+='<div class="form-group"><label>Longitude</label><input id="fCustLng" type="number" step="any" value="'+lng+'" placeholder="106.8456"></div>';
   html+='</div>';
   html+='<div class="form-group"><label>Sales</label><select id="fCustSales"><option value="">Pilih Sales...</option></select></div>';
+  html+='<div class="form-group"><label>Grup Customer</label><select id="fCustGroup"><option value="">Tidak ada grup</option></select></div>';
   html+='<div class="form-group"><label>Keterangan</label><textarea id="fCustNotes" rows="2">'+(pn.text||'')+'</textarea></div>';
   html+='<div class="form-group"><label>Foto Toko</label><input type="file" accept="image/*" id="fCustFoto" onchange="previewCustFoto()"><div id="fCustFotoPreview">'+(pn.photo?'<img src="https://byuocfavyxlotmoslihv.supabase.co/storage/v1/object/public/customer-photos/'+pn.photo+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px" alt="preview">':'')+'</div></div>';
   html+='<div class="modal-actions">';
@@ -4368,6 +4418,7 @@ function showCustomerForm(c){
   showModal(html);
 
   loadSalesDropdown('fCustSales', c.sales_id||'');
+  loadCustomerGroupDropdown('fCustGroup', c.group_id||'');
 
   // Auto-fill latitude & longitude via Geolocation API untuk customer baru
   if (!isEdit && !lat && !lng) {
@@ -4413,6 +4464,7 @@ function simpanCustomer(id){
     phone:document.getElementById('fCustTelp').value.trim(),
     tipe_toko:document.getElementById('fCustTipe').value,
     sales_id:document.getElementById('fCustSales').value,
+    group_id:document.getElementById('fCustGroup').value||null,
     latitude:document.getElementById('fCustLat').value.trim()||null,
     longitude:document.getElementById('fCustLng').value.trim()||null,
     notes:document.getElementById('fCustNotes').value.trim()
@@ -5468,11 +5520,73 @@ function initStokProduksi(){
   var html='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   html+='<button class="btn btn-primary" onclick="showStokGudang()">Stok Gudang</button>';
   html+='<button class="btn btn-outline" onclick="showStokKonsinyasi()">Stok Konsinyasi</button>';
-  html+='<button class="btn btn-outline" onclick="showProduksi()">Catat Produksi</button>';
-  html+='<button class="btn btn-outline" onclick="showRiwayatProduksi()">Riwayat Produksi</button>';
   html+='</div><div id="stokContent"><div class="loading">Memuat...</div></div>';
   mc.innerHTML=html;
   showStokGudang();
+}
+
+// ====== PRODUKSI PAGE (standalone) ======
+function initProduksiPage(){
+  var mc=document.getElementById('mainContent');
+  var html='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+  html+='<button class="btn btn-primary" onclick="showProduksiForm()">Catat Produksi</button>';
+  html+='<button class="btn btn-outline" onclick="showRiwayatProduksiPage()">Riwayat Produksi</button>';
+  html+='</div><div id="produksiContent"><div class="loading">Memuat...</div></div>';
+  mc.innerHTML=html;
+  showRiwayatProduksiPage();
+}
+function showProduksiForm(){
+  loadProdukDropdown('', '', function() {
+    var html='<div class="card"><h4>Catat Produksi Baru</h4>';
+    html+='<div class="form-group"><label>Produk</label><select id="fProdukProduksi"></select></div>';
+    html+='<div class="form-row"><div class="form-group"><label>Jumlah Produksi</label><input type="number" id="fQtyProduksi" min="1"></div>';
+    html+='<div class="form-group"><label>HPP per Unit</label><input type="number" id="fHppProduksi" min="0"></div></div>';
+    html+='<div class="form-group"><label>Batch / No. Produksi</label><input id="fBatchProduksi" placeholder="Misal: BATCH-001"></div>';
+    html+='<div class="form-group"><label>Tanggal Expired (opsional)</label><input type="date" id="fExpProduksi"></div>';
+    html+='<div class="form-group"><label>Keterangan</label><input id="fKetProduksi" placeholder="Opsional"></div>';
+    html+='<button class="btn btn-success" onclick="saveProduksiPage()">Simpan Produksi</button>';
+    html+='<div id="produksiResult" style="margin-top:12px"></div></div>';
+    document.getElementById('produksiContent').innerHTML=html;
+    loadProdukDropdown('fProdukProduksi', '');
+  });
+}
+function saveProduksiPage(){
+  var data={
+    produk_id:document.getElementById('fProdukProduksi').value,
+    qty_produksi:parseFloat(document.getElementById('fQtyProduksi').value),
+    hpp_per_unit:parseFloat(document.getElementById('fHppProduksi').value),
+    batch_number:document.getElementById('fBatchProduksi').value.trim(),
+    tanggal_expired:document.getElementById('fExpProduksi').value,
+    keterangan:document.getElementById('fKetProduksi').value
+  };
+  if(!data.produk_id||!data.qty_produksi){toast('Pilih produk dan isi jumlah');return}
+  document.getElementById('produksiResult').innerHTML='<div class="loading">Menyimpan...</div>';
+  api('createProduksi',{data:data},function(r){
+    if(!r.success){document.getElementById('produksiResult').innerHTML='<p style="color:var(--error)">Error: '+(r.message||'')+'</p>';return}
+    document.getElementById('produksiResult').innerHTML='<p style="color:var(--success);font-weight:600">✅ '+r.message+'</p>';
+    toast('Produksi berhasil dicatat');
+    invalidateCache('produksi');
+  });
+}
+function showRiwayatProduksiPage(){
+  var el=document.getElementById('produksiContent');
+  el.innerHTML='<div class="loading">Memuat riwayat produksi...</div>';
+  api('getProduksi',{},function(r){
+    if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
+    var data=r.data||[];
+    if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Belum ada produksi.</p></div>';return}
+    var totalQty=0,totalBiaya=0;
+    data.forEach(function(p){totalQty+=(p.qty_produksi||0);totalBiaya+=(p.qty_produksi||0)*(p.hpp_per_unit||0);});
+    var html='<div class="card"><div class="flex-between"><h4>Riwayat Produksi</h4><span style="font-size:12px;color:var(--text-light)">Total: '+totalQty+' pcs | Rp '+fmt(totalBiaya)+'</span></div>';
+    html+='<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>ID</th><th>Produk</th><th>Batch</th><th>Qty</th><th>HPP</th><th>Total Biaya</th><th>Tgl</th></tr></thead><tbody>';
+    data.forEach(function(p){
+      var pn=(p.products||{}).name||p.produk_id||'';
+      html+='<tr><td>'+(p.produksi_id||'').substring(0,8)+'</td><td>'+pn+'</td><td>'+(p.batch||p.batch_number||'-')+'</td>';
+      html+='<td>'+(p.qty_produksi||0)+'</td><td>Rp '+fmt(p.hpp_per_unit||0)+'</td><td>Rp '+fmt((p.qty_produksi||0)*(p.hpp_per_unit||0))+'</td><td>'+(p.tanggal_produksi||'').substring(0,10)+'</td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+    el.innerHTML=html;
+  });
 }
 function showStokGudang(){
   var el=document.getElementById('stokContent');
@@ -5779,8 +5893,6 @@ function renderInvoiceNav() {
   var role=(CURRENT_USER||{}).role;
   var html = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   html += '<button class="btn ' + (_invoiceView === 'invoices' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'invoices\')">Semua Invoice</button>';
-  html += '<button class="btn ' + (_invoiceView === 'piutang' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'piutang\')">Piutang Aktif</button>';
-  html += '<button class="btn ' + (_invoiceView === 'aging' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'aging\')">Aging Piutang</button>';
   html += '<button class="btn ' + (_invoiceView === 'setor' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'setor\')">Setor</button>';
   html += '</div>';
   if(role==='OWNER'||role==='ADMIN'){
@@ -5835,16 +5947,59 @@ function renderInvTable(el, data) {
     el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Belum ada invoice.</p></div>';
     return;
   }
-  var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Tgl</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>';
+  var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Tgl</th><th>Customer</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>';
   data.forEach(function(inv) {
     var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : '';
     html += '<tr><td>' + (inv.id || '') + '</td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
     var st = (inv.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
-    html += '<td><span class="' + cls + '">' + st + '</span></td></tr>';
+    html += '<td><span class="' + cls + '">' + st + '</span></td>';
+    html += '<td><button class="btn btn-sm btn-outline" onclick="showInvoiceDetail(\'' + (inv.id || '') + '\')" title="Detail">📋</button></td></tr>';
   });
   html += '</tbody></table></div>';
   el.innerHTML = html;
+}
+
+function showInvoiceDetail(id) {
+  var html = '<div class="loading">Memuat detail invoice...</div>';
+  showModal(html);
+  api('getInvoiceDetail', { id: id }, function(r) {
+    if (!r.success) { document.querySelector('.modal-content').innerHTML = '<h3>Error</h3><p>' + (r.message || '') + '</p><div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Tutup</button></div>'; return; }
+    var inv = r.data.invoice || {};
+    var payments = r.data.payments || [];
+    var cust = inv.customers || {};
+    var sales = inv.sales || {};
+    var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : (inv.created_at ? inv.created_at.substring(0, 10) : '');
+    var st = (inv.status || '').toUpperCase();
+    var totalBayar = payments.reduce(function(s, p) { return s + (p.amount || 0); }, 0);
+    html = '<div class="invoice-print-area">';
+    html += '<div style="text-align:center;margin-bottom:16px"><h3 style="margin:0">📄 Detail Invoice</h3><div style="font-size:12px;color:var(--text-light)">' + id + '</div></div>';
+    html += '<div class="card" style="margin-bottom:12px"><table style="width:100%"><tbody>';
+    html += '<tr><td style="padding:4px 8px;font-weight:600;width:120px">Tanggal</td><td>' + tgl + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;font-weight:600">Customer</td><td>' + (cust.store_name || cust.name || inv.customer_id || '-') + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;font-weight:600">Sales</td><td>' + (sales.full_name || sales.name || inv.sales_id || '-') + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;font-weight:600">Total</td><td><strong>Rp ' + fmt(inv.total || 0) + '</strong></td></tr>';
+    html += '<tr><td style="padding:4px 8px;font-weight:600">Status</td><td><span class="badge-' + (st === 'PAID' ? 'success' : st === 'PARTIAL' ? 'warning' : 'danger') + '">' + st + '</span></td></tr>';
+    html += '</tbody></table></div>';
+    if (payments.length > 0) {
+      html += '<div class="card" style="margin-bottom:12px"><h4 style="margin-bottom:8px">Riwayat Pembayaran</h4><div style="overflow-x:auto"><table><thead><tr><th>Tgl</th><th>Jumlah</th><th>Metode</th><th>Status</th></tr></thead><tbody>';
+      payments.forEach(function(p) {
+        var pt = p.payment_date ? p.payment_date.substring(0, 10) : '';
+        var ps = (p.status || '').toUpperCase();
+        html += '<tr><td>' + pt + '</td><td><strong>Rp ' + fmt(p.amount || 0) + '</strong></td><td>' + (p.method || '-') + '</td><td>' + ps + '</td></tr>';
+      });
+      html += '<tr style="font-weight:700"><td colspan="2">Total Dibayar</td><td colspan="2">Rp ' + fmt(totalBayar) + '</td></tr>';
+      html += '</tbody></table></div></div>';
+    } else {
+      html += '<div class="card" style="margin-bottom:12px"><p style="color:var(--text-light);padding:8px 0">Belum ada pembayaran.</p></div>';
+    }
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    html += '<button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>';
+    html += '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>';
+    html += '</div></div>';
+    var mc = document.querySelector('.modal-content');
+    if (mc) mc.innerHTML = html;
+  });
 }
 
 function loadPiutangList() {
@@ -5913,8 +6068,83 @@ function doBayar() {
       metode: metode
     }
   }, function(r) {
-    if (r.success) { closeModal(); toast('Pembayaran berhasil!'); invalidateCache('pembayaran'); loadPiutangList(); }
+    if (r.success) { closeModal(); toast('Pembayaran berhasil!'); invalidateCache('pembayaran'); if (CURRENT_PAGE === 'piutang') initPiutang(true); else loadPiutangList(); }
     else { toast('Error: ' + (r.message || '')); }
+  });
+}
+
+// ====== PIUTANG PAGE (standalone) ======
+function initPiutang(refresh){
+  var mc=document.getElementById('mainContent');
+  if(!refresh&&_pageCache['piutang']){mc.innerHTML=_pageCache['piutang'];return;}
+  mc.innerHTML='<div class="loading">Memuat piutang...</div>';
+  var role=(CURRENT_USER||{}).role;
+  var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3>💳 Piutang</h3><button class="btn btn-sm btn-outline" onclick="initPiutang(true)">🔄 Refresh</button></div>';
+  if(role==='OWNER'||role==='ADMIN'){
+    html+='<div class="form-group" style="max-width:300px;margin-bottom:12px"><label>Filter Sales</label><select id="fPiutangSales" onchange="filterPiutangSales()"><option value="">Semua Sales</option></select></div>';
+  }
+  html+='<div id="piutangAktif"></div><div id="piutangAging"></div>';
+  mc.innerHTML=html;
+  if(role==='OWNER'||role==='ADMIN')loadSalesDropdown('fPiutangSales', '', function(){ loadPiutangAktif(); loadPiutangAging(); });
+  else { loadPiutangAktif(); loadPiutangAging(); }
+}
+var _piutangSalesFilter = '';
+function filterPiutangSales(){
+  _piutangSalesFilter=document.getElementById('fPiutangSales').value;
+  loadPiutangAktif(); loadPiutangAging();
+}
+function loadPiutangAktif(){
+  var el=document.getElementById('piutangAktif');
+  if(!el)return;
+  el.innerHTML='<div class="loading">Memuat piutang aktif...</div>';
+  var params={status:'OPEN,PARTIAL'};
+  if(_piutangSalesFilter)params.sales_id=_piutangSalesFilter;
+  api('getPiutang',params,function(r){
+    if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return;}
+    var data=r.data||[];
+    var html='<div class="card"><h4>Piutang Aktif</h4>';
+    if(!data.length){html+='<p style="color:var(--text-light);padding:8px 0">Tidak ada piutang aktif.</p>';}
+    else{
+      html+='<div style="overflow-x:auto"><table><thead><tr><th>Piutang</th><th>Customer</th><th>Total</th><th>Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead><tbody>';
+      data.forEach(function(p){
+        var jt=p.due_date?p.due_date.substring(0,10):'';
+        var overdue=p.due_date&&new Date(p.due_date)<new Date()&&p.status!=='PAID';
+        html+='<tr><td>'+(p.id||'')+'</td><td>'+((p.customers&&p.customers.store_name)||p.customer_id||'')+'</td><td>Rp '+fmt(p.total||0)+'</td>';
+        html+='<td><strong>Rp '+fmt(p.remaining||0)+'</strong></td><td style="color:'+(overdue?'var(--error)':'inherit')+'">'+jt+'</td>';
+        var st=(p.status||'').toUpperCase();
+        html+='<td><span class="badge-'+(st==='PAID'?'success':st==='PARTIAL'?'warning':'danger')+'">'+st+'</span></td>';
+        if((p.remaining||0)>0){
+          html+='<td><button class="btn btn-sm btn-primary" onclick="showFormBayar(\''+(p.id||'')+'\',\''+(p.invoice_id||'')+'\','+(p.remaining||0)+')">💰 Bayar</button></td>';
+        }else{html+='<td></td>';}
+        html+='</tr>';
+      });
+      html+='</tbody></table></div>';
+    }
+    html+='</div>';
+    el.innerHTML=html;
+  });
+}
+function loadPiutangAging(){
+  var el=document.getElementById('piutangAging');
+  if(!el)return;
+  el.innerHTML='<div class="loading">Memuat aging piutang...</div>';
+  api('getAgingPiutang',{sales_id:_piutangSalesFilter||undefined},function(r){
+    if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return;}
+    var data=r.data||{};
+    var buckets=[
+      {label:'0-30 hari',key:'0-30',color:'#4CAF50'},
+      {label:'31-60 hari',key:'31-60',color:'#FF9800'},
+      {label:'61-90 hari',key:'61-90',color:'#FF5722'},
+      {label:'>90 hari',key:'>90',color:'#C62828'}
+    ];
+    var html='<div class="card"><h4>Aging Piutang</h4><div style="overflow-x:auto"><table><thead><tr><th>Range</th><th>Total</th></tr></thead><tbody>';
+    buckets.forEach(function(b){
+      var val=data[b.key]||0;
+      html+='<tr><td style="color:'+b.color+';font-weight:600">'+b.label+'</td><td>Rp '+fmt(val)+'</td></tr>';
+    });
+    html+='<tr style="font-weight:700"><td>Total</td><td>Rp '+fmt(data.total||0)+'</td></tr>';
+    html+='</tbody></table></div></div>';
+    el.innerHTML=html;
   });
 }
 
@@ -6304,6 +6534,61 @@ function simpanEditStokKonsinyasi(id) {
 }
 function hapusStokKonsinyasi(id) {
   confirmAndDelete('deleteStokKonsinyasi', id, 'stok-konsinyasi', 'Hapus stok konsinyasi ini?');
+}
+
+// ====== CUSTOMER GROUPS ======
+function initCustomerGroups(refresh){
+  var mc=document.getElementById('mainContent');
+  if(!refresh&&_pageCache['customer-groups']){mc.innerHTML=_pageCache['customer-groups'];return;}
+  mc.innerHTML='<div class="loading">Memuat grup customer...</div>';
+  api('getCustomerGroups',{},function(r){
+    var html='<div class="flex-between"><h3>👪 Grup Customer</h3><button class="btn btn-primary" onclick="showCustomerGroupForm({})">+ Tambah Grup</button></div>';
+    html+='<p style="color:var(--text-light);margin-bottom:12px;font-size:13px">Kelompokkan customer untuk diskon atau penargetan khusus.</p>';
+    if(!r.success||!r.data||!r.data.length){
+      html+='<div class="card"><p style="color:var(--text-light);padding:12px 0">Belum ada grup. Tambah grup pertama Anda.</p></div>';
+      mc.innerHTML=html;return;
+    }
+    html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Nama Grup</th><th>Deskripsi</th><th>Jumlah Customer</th><th></th></tr></thead><tbody>';
+    r.data.forEach(function(g){
+      var jml=g.customer_count||0;
+      html+='<tr><td><strong>'+(g.name||'')+'</strong></td><td>'+(g.description||'-')+'</td><td>'+(jml||'0')+' customer</td>';
+      html+='<td><button class="btn btn-sm btn-outline" onclick="showCustomerGroupForm({id:\''+(g.id)+'\',nama_grup:\''+((g.name||'').replace(/'/g,"\\'"))+'\',deskripsi:\''+((g.description||'').replace(/'/g,"\\'"))+'\'})">✏️</button> ';
+      html+='<button class="btn btn-sm btn-outline" style="color:var(--error)" onclick="hapusCustomerGroup(\''+(g.id)+'\')">🗑️</button></td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+    mc.innerHTML=html;
+  });
+}
+function showCustomerGroupForm(g){
+  var isEdit=!!g.id;
+  var html='<h3>'+(isEdit?'Edit Grup Customer':'Tambah Grup Customer')+'</h3>';
+  html+='<div class="form-group"><label>Nama Grup</label><input id="fGrpNama" value="'+(g.nama_grup||'')+'"></div>';
+  html+='<div class="form-group"><label>Deskripsi</label><textarea id="fGrpDesc" rows="2">'+(g.deskripsi||'')+'</textarea></div>';
+  html+='<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+  html+='<button class="btn btn-primary" onclick="simpanCustomerGroup(\''+(g.id||'')+'\')">'+(isEdit?'Simpan':'Tambah')+'</button></div>';
+  showModal(html);
+}
+function simpanCustomerGroup(id){
+  var nama=document.getElementById('fGrpNama').value.trim();
+  var desc=document.getElementById('fGrpDesc').value.trim();
+  if(!nama){toast('Nama grup wajib diisi');return;}
+  if(id){
+    api('updateCustomerGroup',{id:id,data:{nama_grup:nama,deskripsi:desc}},function(r){
+      closeModal();
+      if(r.success){toast('✅ Grup berhasil diupdate');initCustomerGroups(true);}else{toast('Error: '+r.message);}
+    });
+  }else{
+    api('createCustomerGroup',{data:{nama_grup:nama,deskripsi:desc}},function(r){
+      closeModal();
+      if(r.success){toast('✅ Grup berhasil ditambahkan');initCustomerGroups(true);}else{toast('Error: '+r.message);}
+    });
+  }
+}
+function hapusCustomerGroup(id){
+  if(!confirm('Hapus grup customer ini?'))return;
+  api('deleteCustomerGroup',{id:id},function(r){
+    if(r.success){toast('✅ '+r.message);initCustomerGroups(true);}else{toast('Error: '+r.message);}
+  });
 }
 
 // ====== SALES MANAGEMENT ======
