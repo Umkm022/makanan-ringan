@@ -2182,6 +2182,22 @@ bridge._actions['getNotifikasi'] = async (params) => {
   });
   return ok(mapped);
 };
+bridge._actions['getUnreadNotifByType'] = async (params) => {
+  const d = params?.data || params;
+  const profile = await getCurrentProfile();
+  var q = _supabase.from('notifications').select('*').eq('user_id', profile.id).eq('is_read', false);
+  if (d && d.tipe) q = q.eq('tipe', d.tipe);
+  if (d && d.limit) q = q.limit(d.limit);
+  else q = q.limit(50);
+  const { data } = await q.order('created_at', { ascending: false });
+  return ok((data || []).map(function(n) {
+    return {
+      notifikasi_id: n.id,
+      tipe: n.tipe, judul: n.judul, pesan: n.pesan, link: n.link,
+      is_read: n.is_read, created_at: n.created_at,
+    };
+  }));
+};
 bridge._actions['getVisitReminders'] = async () => {
   const profile = await getCurrentProfile();
   var q = _supabase.from('customers').select('id, store_name, address, latitude, longitude, sales_id, status');
