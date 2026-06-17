@@ -3015,26 +3015,6 @@ bridge._actions['getPendingStockRequests'] = async () => {
   }
   return ok(result);
 };
-bridge._actions['getPendingTitipAwal'] = async () => {
-  const profile = await getCurrentProfile();
-  var { data: notifs } = await _supabase.from('notifications').select('*')
-    .eq('user_id', profile.id).eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
-    .order('created_at', { ascending: false });
-  var result = [];
-  for (var n of (notifs || [])) {
-    var custMatch = n.pesan ? n.pesan.match(/\(([^)]+)\)$/) : null;
-    var customerId = custMatch ? custMatch[1] : '';
-    var salesName = '';
-    if (n.pesan) { var s = n.pesan.replace(/^Sales /, '').replace(/ meminta.*/, ''); if (s) salesName = s; }
-    var storeName = '';
-    if (customerId) {
-      var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).maybeSingle();
-      if (cust) storeName = cust.store_name;
-    }
-    result.push({ notifikasi_id: n.id, customer_id: customerId, store_name: storeName, sales_name: salesName, pesan: n.pesan, created_at: n.created_at });
-  }
-  return ok(result);
-};
 bridge._actions['approveStockRequest'] = async (params) => {
   const d = params?.data || params;
   var requestId = d.request_id;
@@ -3766,7 +3746,7 @@ function invalidateCache(page){
   if (page === 'produk' || page === 'stok-produksi') {
     delete appCache.produk; delete _cacheTimestamps.produk; delete _pageCache['produk']; delete appCache.dashboard;
   } else if (page === 'customer' || page === 'titipan') {
-    delete appCache.customers; delete _cacheTimestamps.customers; delete _pageCache['customer']; delete _pageCache['kunjungan']; delete appCache.dashboard;
+    delete appCache.customers; delete _cacheTimestamps.customers; delete _pageCache['customer']; delete appCache.dashboard;
   } else if (page === 'sales-list' || page === 'sales') {
     delete appCache.salesList; delete _cacheTimestamps.salesList; delete appCache.dashboard;
   } else if (page === 'biaya' || page === 'komisi') {
@@ -5470,60 +5450,31 @@ function loadStockRequests(){
   var el=document.getElementById('stockReqContent');
   if(!el)return;
   el.innerHTML='<div class="loading">Memuat permintaan...</div>';
-  var html='';
-  // Load Ambil Stok requests from stock_requests table
   api('getPendingStockRequests',{},function(r){
-    var data=(r.success&&r.data)||[];
-    if(data.length){
-      html+='<h4 style="margin:12px 0 8px">📦 Request Ambil Stok</h4>';
-      data.forEach(function(req){
-        html+='<div class="card" style="margin-bottom:12px;border-left:4px solid #FF6F00">';
-        html+='<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">';
-        html+='<div><strong>🏪 '+(req.store_name||'')+'</strong><br><span style="font-size:13px;color:var(--text-light)">👤 '+(req.sales_name||'')+'</span></div>';
-        html+='<div style="font-size:12px;color:var(--text-light)">'+(req.created_at||'').substring(0,10)+'</div></div>';
-        html+='<div class="table-wrap" style="margin:8px 0"><table><thead><tr><th>Produk</th><th>Qty</th></tr></thead><tbody>';
-        (req.items||[]).forEach(function(it){
-          var pname=it.nama_produk||it.produk_id||'';
-          html+='<tr><td>'+pname+'</td><td>'+it.qty_requested+' pcs</td></tr>';
-        });
-        html+='</tbody></table></div>';
-        html+='<div style="display:flex;gap:8px">';
-        html+='<button class="btn btn-sm btn-success" onclick="approveStockReq(\''+req.id+'\')">✅ Setujui</button>';
-        html+='<button class="btn btn-sm btn-danger" onclick="rejectStockReq(\''+req.id+'\')">❌ Tolak</button></div>';
-        html+='</div>';
+    if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
+    var data=r.data||[];
+    if(!data.length){
+      el.innerHTML='<div class="card" style="text-align:center;padding:40px"><div style="font-size:48px">✅</div><h4 style="margin:12px 0">Tidak ada permintaan pending</h4><p style="color:var(--text-light)">Semua request stok sudah diproses.</p></div>';
+      return;
+    }
+    var html='';
+    data.forEach(function(req){
+      html+='<div class="card" style="margin-bottom:12px;border-left:4px solid #FF6F00">';
+      html+='<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">';
+      html+='<div><strong>🏪 '+(req.store_name||'')+'</strong><br><span style="font-size:13px;color:var(--text-light)">👤 '+(req.sales_name||'')+'</span></div>';
+      html+='<div style="font-size:12px;color:var(--text-light)">'+(req.created_at||'').substring(0,10)+'</div></div>';
+      html+='<div class="table-wrap" style="margin:8px 0"><table><thead><tr><th>Produk</th><th>Qty</th></tr></thead><tbody>';
+      (req.items||[]).forEach(function(it){
+        var pname=it.nama_produk||it.produk_id||'';
+        html+='<tr><td>'+pname+'</td><td>'+it.qty_requested+' pcs</td></tr>';
       });
-    }
-    // Load REQUEST_TITIP_AWAL notifications (pending)
-    api('getPendingTitipAwal',{},function(nr){
-      var titipAwal=(nr.success&&nr.data)||[];
-      if(titipAwal.length){
-        html+='<h4 style="margin:12px 0 8px">📨 Request Titip Awal</h4>';
-        titipAwal.forEach(function(n){
-          html+='<div class="card" style="margin-bottom:12px;border-left:4px solid #2196F3">';
-          html+='<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">';
-          html+='<div><strong>🏪 '+(n.store_name||'')+'</strong><br><span style="font-size:13px;color:var(--text-light)">👤 '+(n.sales_name||'')+'</span></div>';
-          html+='<div style="font-size:11px;color:var(--text-light)">'+(n.created_at||'').substring(0,10)+'</div></div>';
-          html+='<div style="font-size:12px;color:var(--text-light);margin:4px 0">'+(n.pesan||'')+'</div>';
-          html+='<button class="btn btn-sm btn-primary" onclick="goProcessTitipAwal(\''+(n.customer_id||'')+'\',\''+(n.notifikasi_id||'')+'\')">🛒 Proses Titip</button></div>';
-        });
-      }
-      if(!html){
-        html='<div class="card" style="text-align:center;padding:40px"><div style="font-size:48px">✅</div><h4 style="margin:12px 0">Tidak ada permintaan pending</h4><p style="color:var(--text-light)">Semua request sudah diproses.</p></div>';
-      }
-      el.innerHTML=html;
+      html+='</tbody></table></div>';
+      html+='<div style="display:flex;gap:8px">';
+      html+='<button class="btn btn-sm btn-success" onclick="approveStockReq(\''+req.id+'\')">✅ Setujui</button>';
+      html+='<button class="btn btn-sm btn-danger" onclick="rejectStockReq(\''+req.id+'\')">❌ Tolak</button></div>';
+      html+='</div>';
     });
-  });
-}
-function goProcessTitipAwal(custId,notifId){
-  api('markNotifRead',{notifId:notifId},function(){
-    loadNotifCount();
-    switchTab('titipan');
-    if(custId){
-      setTimeout(function(){
-        var sel=document.getElementById('fTitipCust');
-        if(sel){sel.value=custId;sel.dispatchEvent(new Event('change'));toast('Toko sudah dipilih, silakan isi keranjang titipan');}
-      },800);
-    }
+    el.innerHTML=html;
   });
 }
 function approveStockReq(requestId){

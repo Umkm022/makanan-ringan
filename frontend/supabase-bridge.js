@@ -2502,28 +2502,6 @@ bridge._actions['getPendingStockRequests'] = async () => {
   return ok(result);
 };
 
-bridge._actions['getPendingTitipAwal'] = async () => {
-  const profile = await getCurrentProfile();
-  var { data: notifs } = await _supabase.from('notifications').select('*')
-    .eq('user_id', profile.id).eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
-    .order('created_at', { ascending: false });
-  var result = [];
-  for (var n of (notifs || [])) {
-    // Extract customer_id from pesan: ends with (customerId)
-    var custMatch = n.pesan ? n.pesan.match(/\(([^)]+)\)$/) : null;
-    var customerId = custMatch ? custMatch[1] : '';
-    var salesName = '';
-    if (n.pesan) { var s = n.pesan.replace(/^Sales /, '').replace(/ meminta.*/, ''); if (s) salesName = s; }
-    var storeName = '';
-    if (customerId) {
-      var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).maybeSingle();
-      if (cust) storeName = cust.store_name;
-    }
-    result.push({ notifikasi_id: n.id, customer_id: customerId, store_name: storeName, sales_name: salesName, pesan: n.pesan, created_at: n.created_at });
-  }
-  return ok(result);
-};
-
 bridge._actions['approveStockRequest'] = async (params) => {
   const d = params?.data || params;
   var requestId = d.request_id;
