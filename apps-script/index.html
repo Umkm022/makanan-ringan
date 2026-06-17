@@ -2003,9 +2003,16 @@ function cekStokTitipan(){
       msgEl.innerHTML='<span style="color:var(--success);font-size:13px">✅ Toko sudah punya stok titipan, bisa kunjungan</span>';
       btn.disabled=false;
     } else {
-      msgEl.innerHTML='<span style="color:#FF6F00;font-size:13px">⚠️ Toko ini belum dititipi. Minta Owner titip awal dulu.</span> '+
-        '<button class="btn btn-sm btn-warning" onclick="mintaTitipAwal()" style="margin-top:4px">📨 Minta Titip Awal ke Owner</button>';
+      msgEl.innerHTML='<span style="color:#FF6F00;font-size:13px">⏳ Mengirim permintaan titip awal ke Owner...</span>';
       btn.disabled=true;
+      api('requestTitipAwal',{customer_id:custId},function(r2){
+        if(r2.success){
+          msgEl.innerHTML='<span style="color:var(--success);font-size:13px">✅ Permintaan titip awal sudah dikirim, tunggu Owner memproses</span>';
+        } else {
+          msgEl.innerHTML='<span style="color:#FF6F00;font-size:13px">⚠️ Toko ini belum dititipi. Minta Owner titip awal dulu.</span> '+
+            '<button class="btn btn-sm btn-warning" onclick="mintaTitipAwal()" style="margin-top:4px">📨 Minta Titip Awal ke Owner</button>';
+        }
+      });
     }
   });
 }
