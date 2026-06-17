@@ -1064,7 +1064,12 @@ bridge._actions['getSales'] = bridge._actions['getSalesList'] = async () => {
 
 bridge._actions['getSalesById'] = async (params) => {
   const { data } = await _supabase.from('sales').select('*').eq('id', params.id).single();
-  return ok(data ? mapFields(data, salesMap) : null);
+  var result = data ? mapFields(data, salesMap) : null;
+  if (result) {
+    const { data: userData } = await _supabase.from('users').select('username, auth_id').eq('sales_id', params.id).maybeSingle();
+    if (userData) { result.username = userData.username; result.auth_id = userData.auth_id; }
+  }
+  return ok(result);
 };
 
 bridge._actions['createSales'] = async (params) => {
@@ -1142,6 +1147,15 @@ bridge._actions['createSalesAuth'] = async (params) => {
   });
   if (userErr) return fail(userErr.message);
   return ok(null, 'Akun login berhasil dibuat');
+};
+
+bridge._actions['updateSalesPassword'] = async (params) => {
+  const d = params.data || params;
+  if (!d.auth_id || !d.password) return fail('auth_id dan password wajib');
+  if (!_supabaseAdmin) return fail('Service role not configured');
+  const { error } = await _supabaseAdmin.auth.admin.updateUserById(d.auth_id, { password: d.password });
+  if (error) return fail(error.message);
+  return ok(null, 'Password berhasil diubah');
 };
 
 bridge._actions['updateSales'] = async (params) => {
@@ -6203,9 +6217,10 @@ function showSalesForm(s) {
   html += '<div class="form-group"><label>Alamat</label><input id="fSAddr" value="' + (s.address || '') + '"></div>';
   html += '<div class="form-row"><div class="form-group"><label>Komisi Rate (%)</label><input type="number" id="fSRate" value="' + (s.komisi_rate || 5) + '"></div>';
   html += '<div class="form-group"><label>Target Bulanan (Rp)</label><input type="number" id="fSTarget" value="' + (s.target_bulanan || 0) + '"></div></div>';
-  if (!isEdit) {
-    html += '<div class="form-row"><div class="form-group"><label>Username</label><input id="fSUsername"></div>';
-    html += '<div class="form-group"><label>Password</label><input type="password" id="fSPassword"></div></div>';
+  html += '<div class="form-row"><div class="form-group"><label>Username</label><input id="fSUsername" value="' + (s.username || '') + '"></div>';
+  html += '<div class="form-group"><label>Password</label><input type="password" id="fSPassword" placeholder="' + (isEdit ? 'Kosongkan jika tidak diubah' : '') + '"></div></div>';
+  if (isEdit && s.auth_id) {
+    html += '<p style="font-size:12px;color:var(--text-light);margin-bottom:8px">Isi password hanya jika ingin mengganti password sales.</p>';
   }
   html += '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
   html += '<button class="btn btn-primary" onclick="' + (isEdit ? 'simpanSalesEdit(\'' + s.sales_id + '\')' : 'simpanSalesBaru()') + '">Simpan</button></div>';
@@ -6263,9 +6278,28 @@ function simpanSalesEdit(id) {
     target_bulanan: parseFloat(document.getElementById('fSTarget').value) || 0
   };
   if (!data.full_name) { toast('Nama wajib diisi'); return; }
+  var password = document.getElementById('fSPassword').value;
   api('updateSales', { id: id, data: data }, function(r) {
-    closeModal();
-    if (r.success) { toast('✅ Sales berhasil diupdate'); invalidateCache('sales-list'); initSalesList(true); } else { toast('Error: ' + (r.message || '')); }
+    if (!r.success) { toast('Error: ' + (r.message || '')); return; }
+    if (password) {
+      api('getSalesById', { id: id }, function(r2) {
+        if (r2.success && r2.data && r2.data.auth_id) {
+          api('updateSalesPassword', { data: { auth_id: r2.data.auth_id, password: password } }, function(r3) {
+            closeModal();
+            if (r3.success) { toast('✅ Sales & password berhasil diupdate'); } else { toast('Sales diupdate, tapi gagal ganti password: ' + (r3.message || '')); }
+            invalidateCache('sales-list'); initSalesList(true);
+          });
+        } else {
+          closeModal();
+          toast('✅ Sales berhasil diupdate (password tidak diubah)');
+          invalidateCache('sales-list'); initSalesList(true);
+        }
+      });
+    } else {
+      closeModal();
+      toast('✅ Sales berhasil diupdate');
+      invalidateCache('sales-list'); initSalesList(true);
+    }
   });
 }
 function hapusSales(id) {

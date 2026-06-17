@@ -546,7 +546,12 @@ bridge._actions['getSales'] = bridge._actions['getSalesList'] = async () => {
 
 bridge._actions['getSalesById'] = async (params) => {
   const { data } = await _supabase.from('sales').select('*').eq('id', params.id).single();
-  return ok(data ? mapFields(data, salesMap) : null);
+  var result = data ? mapFields(data, salesMap) : null;
+  if (result) {
+    const { data: userData } = await _supabase.from('users').select('username, auth_id').eq('sales_id', params.id).maybeSingle();
+    if (userData) { result.username = userData.username; result.auth_id = userData.auth_id; }
+  }
+  return ok(result);
 };
 
 bridge._actions['createSales'] = async (params) => {
@@ -624,6 +629,15 @@ bridge._actions['createSalesAuth'] = async (params) => {
   });
   if (userErr) return fail(userErr.message);
   return ok(null, 'Akun login berhasil dibuat');
+};
+
+bridge._actions['updateSalesPassword'] = async (params) => {
+  const d = params.data || params;
+  if (!d.auth_id || !d.password) return fail('auth_id dan password wajib');
+  if (!_supabaseAdmin) return fail('Service role not configured');
+  const { error } = await _supabaseAdmin.auth.admin.updateUserById(d.auth_id, { password: d.password });
+  if (error) return fail(error.message);
+  return ok(null, 'Password berhasil diubah');
 };
 
 bridge._actions['updateSales'] = async (params) => {
