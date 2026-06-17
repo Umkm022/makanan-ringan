@@ -1701,6 +1701,31 @@ bridge._actions['upsertSetting'] = async (params) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════
+// BACKFILL ACTIONS
+// ═══════════════════════════════════════════════════════════════════
+
+bridge._actions['backfillInvoiceNumbers'] = async () => {
+  var { data: invoices } = await _supabase.from('invoices').select('id, created_at').is('invoice_number', null).order('created_at', { ascending: true });
+  if (!invoices || !invoices.length) return ok(null, 'Semua invoice sudah punya nomor');
+  var updated = 0;
+  for (var inv of invoices) {
+    try {
+      var d = new Date(inv.created_at);
+      var ds = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+      var ck = 'inv_counter_' + d.getFullYear() + String(d.getMonth()+1).padStart(2,'0');
+      var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
+      var cnt = cr ? (parseInt(cr.value) + 1) : 1;
+      var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
+      if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
+      else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
+      await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+      updated++;
+    } catch(e) { /* skip problematic row */ }
+  }
+  return ok(null, updated + ' invoice di-backfill');
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // REPORT ACTIONS
 // ═══════════════════════════════════════════════════════════════════
 
