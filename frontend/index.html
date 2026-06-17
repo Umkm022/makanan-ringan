@@ -1745,9 +1745,12 @@ async function hitungKomisi(invoiceId) {
 }
 
 bridge._actions['getKomisi'] = async (params) => {
-  const d = params?.data || params;
+  const d = params?.data || params || {};
   let query = _supabase.from('commissions').select('*, customers(*), sales(*), invoices(*)');
   if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (d?.status) query = query.eq('status', d.status);
+  if (d?.date_from) query = query.gte('created_at', d.date_from);
+  if (d?.date_to) query = query.lte('created_at', d.date_to + 'T23:59:59');
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
 };
@@ -1972,7 +1975,8 @@ bridge._actions['getOwnerDashboard'] = async () => {
   });
 };
 
-bridge._actions['getSalesDashboard'] = async () => {
+bridge._actions['getSalesDashboard'] = async (params) => {
+  const d = params?.data || params || {};
   const profile = await getCurrentProfile();
   var today = new Date().toISOString().substring(0, 10);
   var monthStart = today.substring(0, 7) + '-01';
@@ -1984,7 +1988,12 @@ bridge._actions['getSalesDashboard'] = async () => {
     _supabase.from('invoices').select('total').eq('sales_id', profile.sales_id).eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
     _supabase.from('receivables').select('remaining').eq('sales_id', profile.sales_id),
     _supabase.from('consignment_stock').select('qty_remaining').eq('sales_id', profile.sales_id),
-    _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id).gte('created_at', monthStart),
+    (function(){
+      var q = _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id);
+      if (d.date_from) q = q.gte('created_at', d.date_from);
+      if (d.date_to) q = q.lte('created_at', d.date_to + 'T23:59:59');
+      return q;
+    })(),
   ]);
 
   var omzet = (monthInv.data || []).reduce(function(s, i){ return s + (i.total || 0); }, 0);
@@ -3674,8 +3683,11 @@ function initDashboard(refresh){
   });
 }
 
+var _salesDateFrom = '';
+var _salesDateTo = '';
+
 function initSalesDashboard(refresh){
-  if(!refresh){
+  if(!refresh && !_salesDateFrom){
     var cached = getCached('salesDashboard', 300);
     if (cached && cached.success) {
       renderSalesDashboard((cached.data&&cached.data.kpi)||cached.data||{});
@@ -3684,17 +3696,41 @@ function initSalesDashboard(refresh){
   }
   var mc=document.getElementById('mainContent');
   mc.innerHTML='<div class="loading">Memuat dashboard...</div>';
-  api('getSalesDashboard',{},function(r){
+  var params = {};
+  if (_salesDateFrom) params.date_from = _salesDateFrom;
+  if (_salesDateTo) params.date_to = _salesDateTo;
+  api('getSalesDashboard', params, function(r){
     if(!r.success){mc.innerHTML='<div class="card"><h3>Error</h3><p>'+(r.message||'')+'</p></div>';return}
-    setCached('salesDashboard', r);
+    if (!_salesDateFrom) setCached('salesDashboard', r);
     renderSalesDashboard((r.data&&r.data.kpi)||r.data||{});
   });
 }
 
+function filterSalesDashboard(){
+  _salesDateFrom = document.getElementById('sDateFrom').value;
+  _salesDateTo = document.getElementById('sDateTo').value;
+  initSalesDashboard(true);
+}
+function resetSalesFilter(){
+  _salesDateFrom = '';
+  _salesDateTo = '';
+  initSalesDashboard(true);
+}
+
 function renderSalesDashboard(d){
+  var today = new Date().toISOString().substring(0, 10);
   var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
   html+='<h3 style="color:var(--primary)">📊 Dashboard Saya</h3>';
   html+='<button class="btn btn-sm btn-outline" onclick="initSalesDashboard(true)">🔄 Refresh</button></div>';
+  html+='<div class="card" style="padding:10px 16px;margin-bottom:12px">';
+  html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+  html+='<label style="font-size:12px;font-weight:600;color:var(--text-light)">Filter Komisi:</label>';
+  html+='<input type="date" id="sDateFrom" value="'+(_salesDateFrom||'')+'" style="padding:6px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px">';
+  html+='<span style="color:var(--text-light)">sd</span>';
+  html+='<input type="date" id="sDateTo" value="'+(_salesDateTo||'')+'" style="padding:6px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px">';
+  html+='<button class="btn btn-sm btn-outline" onclick="resetSalesFilter()" style="padding:6px 12px;font-size:12px;min-height:32px">↺ Reset</button>';
+  html+='<button class="btn btn-sm btn-secondary" onclick="filterSalesDashboard()" style="padding:6px 12px;font-size:12px;min-height:32px">🔍 Filter</button>';
+  html+='</div></div>';
   html+='<div class="kpi-grid">';
   var kpis=[
     {v:d.omzet_bulan_ini||0,l:'Omzet Bulan Ini',s:'Rp',t:'omzet-bulan'},
@@ -6249,12 +6285,19 @@ function hapusBiaya(id) {
   confirmAndDelete('deleteBiaya', id, 'biaya', 'Hapus biaya ini?');
 }
 
-// ====== KOMISI PAGE ======
+var _komisiFilter = {};
+
 function initKomisi() {
   var mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Memuat komisi...</div>';
   loadSalesDropdown('', '', function() {
-    api('getKomisi', {}, function(rKomisi) {
+    var today = new Date().toISOString().substring(0, 10);
+    var params = {};
+    if (_komisiFilter.date_from) params.date_from = _komisiFilter.date_from;
+    if (_komisiFilter.date_to) params.date_to = _komisiFilter.date_to;
+    if (_komisiFilter.status) params.status = _komisiFilter.status;
+    if (_komisiFilter.sales_id) params.sales_id = _komisiFilter.sales_id;
+    api('getKomisi', params, function(rKomisi) {
       if (!rKomisi.success) { mc.innerHTML = '<div class="card"><p>Error: ' + (rKomisi.message || '') + '</p></div>'; return; }
       var data = rKomisi.data || [];
       var salesMap = {};
@@ -6266,9 +6309,9 @@ function initKomisi() {
       html += '<div><h3 style="color:var(--primary);font-size:18px">🏆 Komisi Sales</h3><p style="color:var(--text-light);font-size:12px">Kelola pencairan komisi sales</p></div></div>';
 
       // KPI
-      var totalReady = data.filter(function(k){return k.status==='READY'}).reduce(function(s,k){return s+(k.nilai_komisi||0)},0);
-      var totalPaid = data.filter(function(k){return k.status==='PAID'}).reduce(function(s,k){return s+(k.nilai_komisi||0)},0);
-      var totalAll = data.reduce(function(s,k){return s+(k.nilai_komisi||0)},0);
+      var totalReady = data.filter(function(k){return k.status==='READY'}).reduce(function(s,k){return s+(k.amount||0)},0);
+      var totalPaid = data.filter(function(k){return k.status==='PAID'}).reduce(function(s,k){return s+(k.amount||0)},0);
+      var totalAll = data.reduce(function(s,k){return s+(k.amount||0)},0);
       html += kpiCardsHTML([
         {label:'Total Komisi',value:totalAll,prefix:'Rp',color:'#1565C0'},
         {label:'Siap Cair',value:totalReady,prefix:'Rp',color:'#F57F17'},
@@ -6276,23 +6319,24 @@ function initKomisi() {
         {label:'Total Transaksi',value:data.length,prefix:'',color:'#6A1B9A'}
       ]);
 
-      if (data.length === 0) {
-        html += emptyStateHTML('🏆','Belum ada komisi','Komisi akan muncul setelah invoice lunas dan periode berakhir.','🔄 Refresh','initKomisi()');
-        mc.innerHTML = html;
-        return;
-      }
-
-      // Action Toolbar
+      // Filter Toolbar
+      var monthStart = today.substring(0, 7) + '-01';
       html += '<div class="card" style="padding:10px 16px;margin-bottom:12px">';
       html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
-      html += '<div class="search-bar" style="margin:0;flex:1;min-width:160px;max-width:300px">';
-      html += '<input id="komisiSearch" placeholder="Cari sales/invoice..." oninput="searchTable(\'komisiSearch\',\'komisiTable\')" style="padding-left:32px;min-height:36px;font-size:13px">';
-      html += '</div>';
-      html += '<select id="komisiStatusFilter" onchange="filterKomisiTable()" style="width:auto;min-width:130px;padding:8px 10px;font-size:12px;min-height:36px">';
-      html += '<option value="">Semua Status</option><option value="READY">Siap Cair</option><option value="PAID">Sudah Cair</option>';
+      html += '<label style="font-size:11px;font-weight:600;color:var(--text-light)">Dari</label>';
+      html += '<input type="date" id="kDateFrom" value="'+(_komisiFilter.date_from||'')+'" style="padding:6px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px;width:140px">';
+      html += '<label style="font-size:11px;font-weight:600;color:var(--text-light)">Sampai</label>';
+      html += '<input type="date" id="kDateTo" value="'+(_komisiFilter.date_to||'')+'" style="padding:6px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px;width:140px">';
+      html += '<select id="kStatusFilter" style="width:auto;min-width:120px;padding:6px 8px;font-size:12px;min-height:32px;border:1px solid #ddd;border-radius:6px">';
+      html += '<option value="">Semua Status</option><option value="READY"'+( _komisiFilter.status==='READY'?' selected':'')+'>Siap Cair</option><option value="PAID"'+( _komisiFilter.status==='PAID'?' selected':'')+'>Sudah Cair</option>';
       html += '</select>';
+      html += '<select id="kSalesFilter" style="width:auto;min-width:120px;padding:6px 8px;font-size:12px;min-height:32px;border:1px solid #ddd;border-radius:6px">';
+      html += '<option value="">Semua Sales</option>';
+      salesData.forEach(function(s){ html += '<option value="'+s.sales_id+'"'+( _komisiFilter.sales_id===s.sales_id?' selected':'')+'>'+(s.full_name||s.nama||s.sales_id)+'</option>'; });
+      html += '</select>';
+      html += '<button class="btn btn-sm btn-secondary" onclick="applyKomisiFilter()" style="padding:6px 12px;font-size:12px;min-height:32px">🔍 Cari</button>';
       html += '<button class="btn btn-secondary" onclick="cairkanKomisiTerpilih()" style="min-height:36px;padding:8px 14px;font-size:12px">💰 Cairkan Terpilih</button>';
-      html += '<button class="btn btn-sm btn-outline" onclick="initKomisi()" style="min-height:36px">🔄</button>';
+      html += '<button class="btn btn-sm btn-outline" onclick="_komisiFilter={};initKomisi()" style="min-height:32px;font-size:12px">↺ Reset</button>';
       html += '</div></div>';
 
       // Table
@@ -6300,13 +6344,13 @@ function initKomisi() {
       html += '<table id="komisiTable"><thead><tr><th style="width:36px"><input type="checkbox" id="komisiAll" onchange="toggleAllKomisi()"></th><th>Sales</th><th>Invoice</th><th class="text-right">Nilai</th><th>Rate</th><th>Periode</th><th>Status</th><th>Tgl Cair</th></tr></thead><tbody>';
       data.forEach(function(k) {
         var st = k.status || 'READY';
-        var tglCair = k.tanggal_cair ? k.tanggal_cair.substring(0,10) : '';
-        html += '<tr><td>'+(st==='READY'?'<input type="checkbox" class="komisiCb" value="'+k.komisi_id+'">':'')+'</td>';
+        var tglCair = k.paid_date ? k.paid_date.substring(0,10) : '';
+        html += '<tr><td>'+(st==='READY'?'<input type="checkbox" class="komisiCb" value="'+k.id+'">':'')+'</td>';
         html += '<td><strong>'+(salesMap[k.sales_id]||k.sales_id||'')+'</strong></td>';
         html += '<td style="font-size:11px;color:var(--text-light)">'+(k.invoice_id||'')+'</td>';
-        html += '<td class="text-right"><strong>Rp '+fmt(k.nilai_komisi||0)+'</strong></td>';
-        html += '<td>'+(k.komisi_rate||0)+'%</td>';
-        html += '<td style="font-size:12px">'+(k.periode_bulan||'')+'/'+(k.periode_tahun||'')+'</td>';
+        html += '<td class="text-right"><strong>Rp '+fmt(k.amount||0)+'</strong></td>';
+        html += '<td>'+(k.rate||0)+'%</td>';
+        html += '<td style="font-size:12px">'+(k.period_month||'')+'/'+(k.period_year||'')+'</td>';
         html += '<td><span class="badge-'+(st==='PAID'?'success':'warning')+'">'+st+'</span></td>';
         html += '<td style="font-size:11px;color:var(--text-light)">'+tglCair+'</td></tr>';
       });
@@ -6317,15 +6361,12 @@ function initKomisi() {
   });
 }
 
-function filterKomisiTable() {
-  var status = document.getElementById('komisiStatusFilter').value;
-  var rows = document.querySelectorAll('#komisiTable tbody tr');
-  rows.forEach(function(r){
-    if (!status) { r.style.display=''; return; }
-    var stEl = r.querySelector('.badge-success,.badge-warning');
-    var st = stEl ? stEl.textContent.trim() : '';
-    r.style.display = (st===status) ? '' : 'none';
-  });
+function applyKomisiFilter() {
+  _komisiFilter.date_from = document.getElementById('kDateFrom').value || '';
+  _komisiFilter.date_to = document.getElementById('kDateTo').value || '';
+  _komisiFilter.status = document.getElementById('kStatusFilter').value || '';
+  _komisiFilter.sales_id = document.getElementById('kSalesFilter').value || '';
+  initKomisi();
 }
 function toggleAllKomisi() {
   var all = document.getElementById('komisiAll').checked;

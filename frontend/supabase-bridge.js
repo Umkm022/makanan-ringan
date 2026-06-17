@@ -1227,9 +1227,12 @@ async function hitungKomisi(invoiceId) {
 }
 
 bridge._actions['getKomisi'] = async (params) => {
-  const d = params?.data || params;
+  const d = params?.data || params || {};
   let query = _supabase.from('commissions').select('*, customers(*), sales(*), invoices(*)');
   if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (d?.status) query = query.eq('status', d.status);
+  if (d?.date_from) query = query.gte('created_at', d.date_from);
+  if (d?.date_to) query = query.lte('created_at', d.date_to + 'T23:59:59');
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
 };
@@ -1454,7 +1457,8 @@ bridge._actions['getOwnerDashboard'] = async () => {
   });
 };
 
-bridge._actions['getSalesDashboard'] = async () => {
+bridge._actions['getSalesDashboard'] = async (params) => {
+  const d = params?.data || params || {};
   const profile = await getCurrentProfile();
   var today = new Date().toISOString().substring(0, 10);
   var monthStart = today.substring(0, 7) + '-01';
@@ -1466,7 +1470,12 @@ bridge._actions['getSalesDashboard'] = async () => {
     _supabase.from('invoices').select('total').eq('sales_id', profile.sales_id).eq('status', 'PAID').gte('invoice_date', monthStart).lte('invoice_date', today),
     _supabase.from('receivables').select('remaining').eq('sales_id', profile.sales_id),
     _supabase.from('consignment_stock').select('qty_remaining').eq('sales_id', profile.sales_id),
-    _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id).gte('created_at', monthStart),
+    (function(){
+      var q = _supabase.from('commissions').select('amount, status').eq('sales_id', profile.sales_id);
+      if (d.date_from) q = q.gte('created_at', d.date_from);
+      if (d.date_to) q = q.lte('created_at', d.date_to + 'T23:59:59');
+      return q;
+    })(),
   ]);
 
   var omzet = (monthInv.data || []).reduce(function(s, i){ return s + (i.total || 0); }, 0);
