@@ -1165,7 +1165,20 @@ bridge._actions['getInvoiceDetail'] = async (params) => {
   if (error) return fail(error.message);
   const { data: payments } = await _supabase.from('payments').select('*').eq('invoice_id', d.id).order('payment_date', { ascending: false });
   const { data: receivables } = await _supabase.from('receivables').select('*').eq('invoice_id', d.id);
-  const { data: details } = await _supabase.from('invoice_details').select('*, products(*)').eq('invoice_id', d.id);
+  var details = [];
+  try {
+    var { data: detData } = await _supabase.from('invoice_details').select('*').eq('invoice_id', d.id);
+    details = detData || [];
+    if (details.length) {
+      var prodIds = details.map(function(x){ return x.product_id; }).filter(Boolean);
+      if (prodIds.length) {
+        var { data: products } = await _supabase.from('products').select('id, name, code').in('id', prodIds);
+        var prodMap = {};
+        (products || []).forEach(function(p){ prodMap[p.id] = p; });
+        details.forEach(function(det){ det.products = prodMap[det.product_id] || null; });
+      }
+    }
+  } catch(e) { details = []; }
   return ok({ invoice: inv, payments: payments || [], receivables: receivables || [], details: details || [] });
 };
 
