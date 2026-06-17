@@ -529,6 +529,24 @@ bridge._actions['createKategori'] = async (params) => {
   return ok(data, 'Kategori berhasil dibuat');
 };
 
+bridge._actions['updateKategori'] = async (params) => {
+  const d = params.data || params;
+  const { data, error } = await _supabase.from('categories').update({
+    name: d.nama_kategori,
+    description: d.deskripsi,
+  }).eq('id', d.id).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Kategori berhasil diupdate');
+};
+
+bridge._actions['deleteKategori'] = async (params) => {
+  const { count } = await _supabase.from('produk').select('*', { count: 'exact', head: true }).eq('category_id', params.id);
+  if (count && count > 0) return fail('Tidak bisa dihapus — masih ada ' + count + ' produk menggunakan kategori ini');
+  const { error } = await _supabase.from('categories').delete().eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Kategori berhasil dihapus');
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // SALES ACTIONS
 // ═══════════════════════════════════════════════════════════════════

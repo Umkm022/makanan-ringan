@@ -107,16 +107,6 @@ tr:hover{background:#FAFAFA}
   --lp-art-3: rgba(236,72,153,0.04);
   --lp-art-grad: linear-gradient(160deg, #0B1220 0%, #111827 50%, #1E293B 100%);
 }
-  --lp-input-ring: #3B82F6;
-  --lp-accent: #3B82F6;
-  --lp-accent-hover: #60A5FA;
-  --lp-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
-  --lp-glass-border: rgba(255,255,255,0.04);
-  --lp-art-1: rgba(59,130,246,0.08);
-  --lp-art-2: rgba(139,92,246,0.05);
-  --lp-art-3: rgba(236,72,153,0.03);
-  --lp-art-grad: linear-gradient(160deg, #0B1220 0%, #111827 50%, #1E293B 100%);
-}
 
 #page-login { background: var(--lp-bg); min-height: 100vh; position: relative; overflow: hidden; }
 
@@ -301,7 +291,12 @@ tr:hover{background:#FAFAFA}
 .sidebar-nav{flex:1;padding:8px 0;overflow-y:auto}
 .sidebar .nav-item{display:flex;align-items:center;padding:12px 20px;color:#BDBDBD;cursor:pointer;transition:all .15s;font-size:14px;gap:12px;border-left:3px solid transparent;min-height:44px;text-decoration:none}
 .sidebar .nav-item:hover{background:rgba(255,255,255,0.06);color:#fff}
+.sidebar .nav-item:focus-visible{outline:2px solid #FF6F00;outline-offset:-2px}
 .sidebar .nav-item.active{background:rgba(255,111,0,0.12);color:#FF6F00;border-left-color:#FF6F00}
+.tabbar button:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+.kpi-card{cursor:pointer;transition:transform .15s,box-shadow .15s}
+.kpi-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.12)}
+.dark .kpi-card:hover{box-shadow:0 6px 20px rgba(0,0,0,0.3)}
 .sidebar .nav-item .icon{font-size:18px;width:24px;text-align:center;flex-shrink:0}
 .sidebar .nav-item .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sidebar-footer{padding:12px 20px;border-top:1px solid rgba(255,255,255,0.08);font-size:12px;color:#757575;flex-shrink:0}
@@ -1045,6 +1040,24 @@ bridge._actions['createKategori'] = async (params) => {
   }).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Kategori berhasil dibuat');
+};
+
+bridge._actions['updateKategori'] = async (params) => {
+  const d = params.data || params;
+  const { data, error } = await _supabase.from('categories').update({
+    name: d.nama_kategori,
+    description: d.deskripsi,
+  }).eq('id', d.id).select().single();
+  if (error) return fail(error.message);
+  return ok(data, 'Kategori berhasil diupdate');
+};
+
+bridge._actions['deleteKategori'] = async (params) => {
+  const { count } = await _supabase.from('produk').select('*', { count: 'exact', head: true }).eq('category_id', params.id);
+  if (count && count > 0) return fail('Tidak bisa dihapus — masih ada ' + count + ' produk menggunakan kategori ini');
+  const { error } = await _supabase.from('categories').delete().eq('id', params.id);
+  if (error) return fail(error.message);
+  return ok(null, 'Kategori berhasil dihapus');
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2992,7 +3005,7 @@ window.goSetup = function goSetup() {
           <label class="remember">
             <input type="checkbox" id="rememberMe"> Remember me
           </label>
-          <a href="#" class="forgot-link" onclick="alert('Hubungi admin untuk reset password.')">Forgot password?</a>
+          <a href="#" class="forgot-link" onclick="showForgotPassword();return false">Forgot password?</a>
         </div>
         <button class="login-submit" id="btnLogin" onclick="doLogin()">
           <span class="btn-text">Sign In</span>
@@ -3155,6 +3168,28 @@ function togglePassword(btn){
   if(inp.type==='password'){inp.type='text';btn.textContent='🙈'}else{inp.type='password';btn.textContent='👁️'}
 }
 
+function showForgotPassword(){
+  var html='<h3>🔑 Reset Password</h3>';
+  html+='<p style="color:var(--text-light);margin-bottom:12px;font-size:14px">Masukkan email untuk menerima link reset password.</p>';
+  html+='<div class="form-group"><label>Email</label><input type="email" id="fResetEmail" placeholder="email@example.com"></div>';
+  html+='<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+  html+='<button class="btn btn-primary" id="btnResetPass" onclick="doResetPassword()">Kirim Link Reset</button></div>';
+  showModal(html);
+  setTimeout(function(){var el=document.getElementById('fResetEmail');if(el)el.focus();},100);
+}
+function doResetPassword(){
+  var email=document.getElementById('fResetEmail').value.trim();
+  if(!email){toast('Masukkan email terlebih dahulu');return;}
+  var btn=document.getElementById('btnResetPass');
+  btn.disabled=true;btn.textContent='Mengirim...';
+  _supabase.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+'/reset-password'}).then(function(r){
+    btn.disabled=false;btn.textContent='Kirim Link Reset';
+    if(r.error){toast('Gagal: '+r.error.message);return;}
+    closeModal();
+    toast('✅ Link reset password telah dikirim ke '+email+'. Cek inbox/spam.');
+  });
+}
+
 // doSetup now handled by auth.js
 
 // ====== APP ENTRY ======
@@ -3218,6 +3253,7 @@ function buildTabs(role){
   if(role==='OWNER'||role==='ADMIN'){
     tabs.push({id:'dashboard',label:'Dashboard',icon:'📊'});
     tabs.push({id:'produk',label:'Produk',icon:'📦'});
+    tabs.push({id:'kategori',label:'Kategori',icon:'📂'});
     tabs.push({id:'customer',label:'Customer',icon:'👥'});
     tabs.push({id:'sales-list',label:'Sales',icon:'👤'});
     tabs.push({id:'kunjungan',label:'Kunjungan',icon:'🚗'});
@@ -3283,7 +3319,7 @@ function activateTab(id){
   // Update page title
   var titleEl=document.getElementById('pageTitle');
   if(titleEl){
-    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','customer':'👥 Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','stok-produksi':'🏭 Stok','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
+    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','kategori':'📂 Kategori','customer':'👥 Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','stok-produksi':'🏭 Stok','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
     titleEl.textContent=labels[id]||'📊 Dashboard';
   }
 }
@@ -3419,8 +3455,9 @@ function formatTime(){
 
 function afterPageLoad(id){
   if(id==='dashboard')initDashboard();
-  else if(id==='produk')initProduk();
-  else if(id==='customer')initCustomer();
+   else if(id==='produk')initProduk();
+   else if(id==='kategori')initKategori();
+   else if(id==='customer')initCustomer();
   else if(id==='kunjungan')initKunjungan('OWNER');
   else if(id==='setup-data')initSetupData();
   else if(id==='invoice')initInvoice();
@@ -3442,15 +3479,23 @@ function afterPageLoad(id){
 function showModal(html){
   document.getElementById('modalContent').innerHTML=html;
   document.getElementById('modalOverlay').style.display='flex';
+  document.addEventListener('keydown', _modalKeyHandler);
 }
-function closeModal(){document.getElementById('modalOverlay').style.display='none'}
+function _modalKeyHandler(e){
+  if (e.key === 'Escape') closeModal();
+}
+function closeModal(){
+  document.getElementById('modalOverlay').style.display='none';
+  document.removeEventListener('keydown', _modalKeyHandler);
+}
 
 function showKpiDetail(type){
   var labels={
     'omzet-hari':'Omzet Hari Ini','omzet-bulan':'Omzet Bulan Ini','laba-kotor':'Laba Kotor','laba-bersih':'Laba Bersih',
     'piutang':'Piutang Aktif','stok-gudang':'Stok Gudang','stok-konsinyasi':'Stok Konsinyasi',
     'komisi':'Komisi Bulan Ini','toko-aktif':'Toko Aktif','kunjungan':'Kunjungan Hari Ini',
-    'komisi-ready':'Komisi Siap Cair','komisi-paid':'Komisi Cair','invoice-baru':'Invoice Belum Lunas'
+    'komisi-ready':'Komisi Siap Cair','komisi-paid':'Komisi Cair','invoice-baru':'Invoice Belum Lunas',
+    'total-sales':'Total Sales','total-visits':'Kunjungan Bulan Ini'
   };
   var title=labels[type]||'Detail';
   showModal('<div style="max-width:600px"><h3 style="margin-bottom:12px;color:var(--primary)">'+title+'</h3><div id="kpiDetailBody"><div class="loading">Memuat...</div></div></div>');
@@ -3662,7 +3707,10 @@ function renderDashboard(d){
     {v:d.kpi.piutang_aktif||0,l:'Piutang Aktif',s:'Rp',c:'#E65100',t:'piutang'},
     {v:d.kpi.stok_gudang||0,l:'Stok Gudang',s:'',c:'#6A1B9A',t:'stok-gudang'},
     {v:d.kpi.stok_konsinyasi||0,l:'Stok Konsinyasi',s:'',c:'#00838F',t:'stok-konsinyasi'},
-    {v:d.kpi.komisi_bulan_ini||0,l:'Komisi Bulan Ini',s:'Rp',c:'#F57C00',t:'komisi'}
+    {v:d.kpi.komisi_bulan_ini||0,l:'Komisi Bulan Ini',s:'Rp',c:'#F57C00',t:'komisi'},
+    {v:d.total_sales||0,l:'Total Sales',s:'',c:'#4A148C',t:'total-sales'},
+    {v:d.total_visits||0,l:'Kunjungan Bulan Ini',s:'',c:'#00695C',t:'total-visits'},
+    {v:d.total_unpaid_invoices||0,l:'Invoice Belum Lunas',s:'',c:'#BF360C',t:'invoice-baru'}
   ];
   kpis.forEach(function(k){
     var val=k.s==='Rp'?'Rp '+fmt(k.v):fmt(k.v);
@@ -3731,7 +3779,10 @@ function renderDashboard(d){
 
   html+='</div>'; // End charts grid
 
-  // ===== SECTION 6: FORECAST (loaded async) =====
+  // ===== SECTION 6: EXTRA KPI ROW (loaded async) =====
+  html+='<div id="dashboardExtraKpi" style="margin-bottom:16px"></div>';
+
+  // ===== SECTION 7: FORECAST (loaded async) =====
   html+='<div id="dashboardForecast"></div>';
 
   // ===== SECTION 7: VISIT REMINDERS (loaded async) =====
@@ -3742,6 +3793,7 @@ function renderDashboard(d){
 
   // Load async alerts
   loadDashboardAlerts();
+  loadDashboardExtraKpi();
   loadDashboardForecast();
   loadOwnerDashboardReminders();
 }
@@ -3866,6 +3918,38 @@ function loadSalesReminders(callback) {
     });
     html += '</div>';
     mc.insertAdjacentHTML('beforeend', html);
+  });
+}
+
+function loadDashboardExtraKpi(){
+  if (CURRENT_PAGE !== 'dashboard') return;
+  var el = document.getElementById('dashboardExtraKpi');
+  if (!el) return;
+  var today = new Date().toISOString().substring(0, 10);
+  var monthStart = today.substring(0, 7) + '-01';
+  Promise.all([
+    api('getCustomers', {}, function(r){}),
+    api('getStokKonsinyasi', {}, function(r){}),
+  ]);
+  // Custom query: customer aktif (punya invoice bulan ini)
+  _supabase.from('invoices').select('customer_id').eq('status','PAID').gte('invoice_date',monthStart).lte('invoice_date',today).then(function(rInv){
+    var aktif = new Set((rInv.data||[]).map(function(i){return i.customer_id})).size;
+    var totalCust = (window._cachedCustomerCount||0);
+    // Retur: hitung dari consignment items
+    _supabase.from('consignment_stock').select('qty_consigned,qty_returned').gte('updated_at',monthStart).then(function(rRet){
+      var totalTitip = 0, totalRetur = 0;
+      (rRet.data||[]).forEach(function(s){ totalTitip += (s.qty_consigned||0); totalRetur += (s.qty_returned||0); });
+      var returRate = totalTitip > 0 ? (totalRetur/totalTitip*100).toFixed(1) : '0.0';
+      var html = '<div class="kpi-grid">';
+      html += '<div class="kpi-card" style="border-top:3px solid #00897B"><div class="kpi-value" style="color:#00897B">'+aktif+' / '+(totalCust||'?')+'</div><div class="kpi-label">Customer Aktif Bulan Ini</div><div class="kpi-sub">Bertransaksi > 0</div></div>';
+      html += '<div class="kpi-card" style="border-top:3px solid #5E35B1"><div class="kpi-value" style="color:#5E35B1">'+returRate+'%</div><div class="kpi-label">Retur Rate</div><div class="kpi-sub">Retur/Titip bulan ini</div></div>';
+      html += '</div>';
+      el.innerHTML = html;
+    });
+  });
+  // Hitung total customer
+  api('getCustomers',{},function(r){
+    if(r.success) window._cachedCustomerCount = (r.data||[]).length;
   });
 }
 
@@ -4183,6 +4267,60 @@ function filterCustTable(){
   var filtered=_allCust;
   if(_custSalesFilter)filtered=_allCust.filter(function(c){return c.sales_id===_custSalesFilter});
   renderCustomer(filtered);
+}
+
+function initKategori(refresh){
+  var mc=document.getElementById('mainContent');
+  if(!refresh&&_pageCache['kategori']){mc.innerHTML=_pageCache['kategori'];return;}
+  mc.innerHTML='<div class="loading">Memuat kategori...</div>';
+  api('getKategori',{},function(r){
+    var html='<div class="flex-between"><h3>📂 Kategori Produk</h3><button class="btn btn-primary" onclick="showKategoriForm({})">+ Tambah Kategori</button></div>';
+    html+='<p style="color:var(--text-light);margin-bottom:12px;font-size:13px">Kelola kategori untuk mengelompokkan produk.</p>';
+    if(!r.success||!r.data||!r.data.length){
+      html+='<div class="card"><p style="color:var(--text-light);padding:12px 0">Belum ada kategori. Tambah kategori pertama Anda.</p></div>';
+      mc.innerHTML=html;return;
+    }
+    html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Nama</th><th>Deskripsi</th><th>Jumlah Produk</th><th></th></tr></thead><tbody>';
+    r.data.forEach(function(k){
+      var jml=k.produk_count||0;
+      html+='<tr><td><strong>'+(k.nama_kategori||k.name||'')+'</strong></td><td>'+(k.deskripsi||k.description||'-')+'</td><td>'+(jml||'0')+' produk</td>';
+      html+='<td><button class="btn btn-sm btn-outline" onclick="showKategoriForm({id:\''+(k.kategori_id||k.id)+'\',nama_kategori:\''+((k.nama_kategori||k.name||'').replace(/'/g,"\\'"))+'\',deskripsi:\''+((k.deskripsi||k.description||'').replace(/'/g,"\\'"))+'\'})">✏️</button> ';
+      html+='<button class="btn btn-sm btn-outline" style="color:var(--error)" onclick="hapusKategori(\''+(k.kategori_id||k.id)+'\')">🗑️</button></td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+    mc.innerHTML=html;
+  });
+}
+function showKategoriForm(k){
+  var isEdit=!!k.id;
+  var html='<h3>'+(isEdit?'Edit Kategori':'Tambah Kategori')+'</h3>';
+  html+='<div class="form-group"><label>Nama Kategori</label><input id="fKatNama" value="'+(k.nama_kategori||'')+'"></div>';
+  html+='<div class="form-group"><label>Deskripsi</label><textarea id="fKatDesc" rows="2">'+(k.deskripsi||'')+'</textarea></div>';
+  html+='<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+  html+='<button class="btn btn-primary" onclick="simpanKategori(\''+(k.id||'')+'\')">'+(isEdit?'Simpan':'Tambah')+'</button></div>';
+  showModal(html);
+}
+function simpanKategori(id){
+  var nama=document.getElementById('fKatNama').value.trim();
+  var desc=document.getElementById('fKatDesc').value.trim();
+  if(!nama){toast('Nama kategori wajib diisi');return;}
+  if(id){
+    api('updateKategori',{id:id,data:{nama_kategori:nama,deskripsi:desc}},function(r){
+      closeModal();
+      if(r.success){toast('✅ Kategori berhasil diupdate');initKategori(true);}else{toast('Error: '+r.message);}
+    });
+  }else{
+    api('createKategori',{data:{nama_kategori:nama,deskripsi:desc}},function(r){
+      closeModal();
+      if(r.success){toast('✅ Kategori berhasil ditambahkan');initKategori(true);}else{toast('Error: '+r.message);}
+    });
+  }
+}
+function hapusKategori(id){
+  if(!confirm('Hapus kategori ini?'))return;
+  api('deleteKategori',{id:id},function(r){
+    if(r.success){toast('✅ '+r.message);initKategori(true);}else{toast('Error: '+r.message);}
+  });
 }
 
 function initCustomer(refresh){
@@ -5909,7 +6047,7 @@ function renderSetorTableOwner(el, data) {
   if (menungguFiltered.length > 0) {
     html += '<div class="card"><h4 style="color:#FF9800;margin-bottom:8px">⏳ Menunggu Konfirmasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Sales</th><th>Customer</th><th>Jumlah</th><th>Metode</th><th>Tgl Bayar</th><th></th></tr></thead><tbody>';
     menungguFiltered.forEach(function(p) {
-      html += '<tr><td>' + (p.sales_id || '').substring(0, 8) + '</td><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td>';
+      html += '<tr><td>' + (p.sales_nama || p.sales_id || '').substring(0, 20) + '</td><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td>';
       html += '<td><button class="btn btn-sm btn-success" onclick="doKonfirmasiSetoran(\'' + p.pembayaran_id + '\')">Terima</button></td></tr>';
     });
     html += '</tbody></table></div></div>';
@@ -5920,7 +6058,7 @@ function renderSetorTableOwner(el, data) {
     var combined = belumFiltered.concat(sudahFiltered);
     combined.forEach(function(p) {
       var st = p.status_penyetoran === 'SUDAH_DISETOR' ? '<span class="badge-success">SUDAH</span>' : '<span class="badge-danger">BELUM</span>';
-      html += '<tr><td>' + (p.sales_id || '').substring(0, 8) + '</td><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td><td>' + st + '</td></tr>';
+      html += '<tr><td>' + (p.sales_nama || p.sales_id || '').substring(0, 20) + '</td><td>' + (p.customer_nama || '-') + '</td><td><strong>Rp ' + fmt(p.jumlah_bayar) + '</strong></td><td>' + (p.metode_bayar || '-') + '</td><td>' + (p.tanggal || '').substring(0, 10) + '</td><td>' + st + '</td></tr>';
     });
     html += '</tbody></table></div></div>';
   }
@@ -7076,8 +7214,42 @@ window.addEventListener('resize',function(){
   if(window.innerWidth>=992) document.body.classList.remove('sidebar-open');
 });
 
+// ====== PASSWORD RESET REDIRECT HANDLER ======
+(function(){
+  var hash = window.location.hash || '';
+  if (hash.includes('type=recovery') && hash.includes('access_token=')) {
+    var params = new URLSearchParams(hash.substring(1));
+    var accessToken = params.get('access_token');
+    var refreshToken = params.get('refresh_token');
+    if (accessToken && refreshToken && typeof _supabase !== 'undefined') {
+      _supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }).then(function(){
+        var html='<h3>🔑 Buat Password Baru</h3>';
+        html+='<p style="color:var(--text-light);margin-bottom:12px;font-size:14px">Masukkan password baru untuk akun Anda.</p>';
+        html+='<div class="form-group"><label>Password Baru</label><input type="password" id="fNewPass" placeholder="Minimal 6 karakter"></div>';
+        html+='<div class="form-group"><label>Konfirmasi Password</label><input type="password" id="fNewPassConfirm" placeholder="Ulangi password"></div>';
+        html+='<div class="modal-actions"><button class="btn btn-primary" onclick="doSetNewPassword()">Simpan Password Baru</button></div>';
+        showModal(html);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      });
+    }
+  }
+})();
+
 // ====== INIT ======
 document.getElementById('password').addEventListener('keyup',function(e){if(e.key==='Enter')doLogin()});
+
+function doSetNewPassword(){
+  var pass=document.getElementById('fNewPass').value;
+  var confirm=document.getElementById('fNewPassConfirm').value;
+  if(!pass||pass.length<6){toast('Password minimal 6 karakter');return;}
+  if(pass!==confirm){toast('Konfirmasi password tidak cocok');return;}
+  _supabase.auth.updateUser({password:pass}).then(function(r){
+    if(r.error){toast('Gagal: '+r.error.message);return;}
+    closeModal();
+    toast('✅ Password berhasil diubah. Silakan login dengan password baru.');
+    _supabase.auth.signOut();
+  });
+}
 
 (function(){
   var token=getToken();
