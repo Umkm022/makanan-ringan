@@ -450,6 +450,7 @@ body.sales-layout .tabbar{display:flex !important}
   .dark .card{background:#fff!important;color:#000!important}
   .dark td,.dark th{border-bottom-color:#ccc!important}
   #modalContent{position:static!important;transform:none!important;max-width:100%!important;box-shadow:none!important;border:none!important;padding:0!important;margin:0!important}
+  .modal-overlay.invoice-detail{align-items:flex-start;padding-top:24px}
   .invoice-print-area{display:block!important}
   .invoice-print-area .btn{display:none!important}
 }
@@ -503,6 +504,8 @@ body.sales-layout .tabbar{display:flex !important}
 .dark .urgency-green{background:#1B3A1C;color:#A5D6A7}
 .leaflet-popup-content{font-size:13px;line-height:1.4}
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;animation:fadeIn .2s}
+.modal-overlay.invoice-detail{align-items:flex-start;padding-top:16px}
+.modal-overlay.invoice-detail .modal-card{max-width:680px}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 .modal-card-confirm{background:#fff;border-radius:16px;padding:24px;max-width:360px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.15);animation:slideUp .25s ease}
@@ -3529,6 +3532,7 @@ function _modalKeyHandler(e){
 }
 function closeModal(){
   document.getElementById('modalOverlay').style.display='none';
+  document.getElementById('modalOverlay').classList.remove('invoice-detail');
   document.removeEventListener('keydown', _modalKeyHandler);
 }
 
@@ -5962,6 +5966,7 @@ function renderInvTable(el, data) {
 
 function showInvoiceDetail(id) {
   var html = '<div class="loading">Memuat detail invoice...</div>';
+  document.getElementById('modalOverlay').classList.add('invoice-detail');
   showModal(html);
   api('getInvoiceDetail', { id: id }, function(r) {
     if (!r.success) { document.getElementById('modalContent').innerHTML = '<h3>Error</h3><p>' + (r.message || '') + '</p><div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Tutup</button></div>'; return; }
