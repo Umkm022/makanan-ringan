@@ -1234,7 +1234,26 @@ bridge._actions['getKomisi'] = async (params) => {
   if (d?.date_from) query = query.gte('created_at', d.date_from);
   if (d?.date_to) query = query.lte('created_at', d.date_to + 'T23:59:59');
   const { data } = await query.order('created_at', { ascending: false });
-  return ok(data);
+  const mapped = (data || []).map(function(k) {
+    var s = k.sales || {};
+    return {
+      komisi_id: k.id,
+      sales_id: k.sales_id,
+      invoice_id: k.invoice_id,
+      customer_id: k.customer_id,
+      total_invoice: k.total_invoice,
+      nilai_komisi: k.amount || 0,
+      komisi_rate: k.rate || 0,
+      periode_bulan: k.period_month || 0,
+      periode_tahun: k.period_year || 0,
+      status: k.status || '',
+      tanggal_cair: k.paid_date || '',
+      created_at: k.created_at,
+      sales_nama: s.full_name || s.nama || s.name || k.sales_id,
+      customer_nama: k.customers?.store_name || k.customers?.nama || '',
+    };
+  });
+  return ok(mapped);
 };
 
 bridge._actions['cairkanKomisi'] = async (params) => {
@@ -1246,6 +1265,23 @@ bridge._actions['cairkanKomisi'] = async (params) => {
     paid_date: new Date().toISOString(),
   }).in('id', ids).select();
   if (error) return fail(error.message);
+  // Kirim notifikasi ke sales
+  var salesIds = [...new Set((data || []).map(function(c){ return c.sales_id; }).filter(Boolean))];
+  if (salesIds.length) {
+    var { data: users } = await _supabase.from('users').select('id').in('sales_id', salesIds);
+    if (users && users.length) {
+      var totalAmount = (data || []).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
+      for (var u of users) {
+        await _supabase.from('notifications').insert({
+          user_id: u.id, tipe: 'KOMISI_CAIR',
+          judul: '💰 Komisi Cair',
+          pesan: 'Komisi Rp ' + (totalAmount || 0).toLocaleString('id-ID') + ' sudah dicairkan',
+          link: '?page=komisi',
+          is_read: false, created_at: new Date(),
+        });
+      }
+    }
+  }
   return ok(data, 'Komisi berhasil dicairkan');
 };
 
@@ -1407,7 +1443,7 @@ bridge._actions['getOwnerDashboard'] = async () => {
     _supabase.from('expenses').select('amount').gte('date', monthStart),
     _supabase.from('commissions').select('amount, status').gte('created_at', monthStart),
     _supabase.from('invoice_details').select('product_id, qty, subtotal, products(name, hpp)').limit(5).order('subtotal', { ascending: false }),
-    _supabase.from('invoices').select('sales_id, total, sales(full_name)').eq('status', 'PAID').gte('invoice_date', monthStart).limit(5).order('total', { ascending: false }),
+    _supabase.from('invoices').select('sales_id, total, sales(full_name)').eq('status', 'PAID').gte('invoice_date', monthStart).order('total', { ascending: false }),
     _supabase.from('invoices').select('invoice_date, total').eq('status', 'PAID').gte('invoice_date', new Date(Date.now() - 7*86400000).toISOString().substring(0, 10)).order('invoice_date'),
     _supabase.from('invoices').select('invoice_date, total').eq('status', 'PAID').gte('invoice_date', new Date(Date.now() - 365*86400000).toISOString().substring(0, 10)).order('invoice_date'),
   ]);
@@ -1447,7 +1483,13 @@ bridge._actions['getOwnerDashboard'] = async () => {
       komisi_bulan_ini: komisi,
     },
     top_produk: (topP.data || []).map(function(p){ return { produk_id: p.product_id, name: p.products?.name || '', terjual: p.qty || 0, omzet: p.subtotal || 0 }; }),
-    top_sales: (topS.data || []).map(function(s){ return { sales_id: s.sales_id, name: s.sales?.full_name || s.sales_id, total: s.total || 0 }; }),
+    top_sales: Object.values((topS.data || []).reduce(function(acc, s){
+      var sid = s.sales_id || '';
+      if (!acc[sid]) acc[sid] = { sales_id: sid, name: s.sales?.full_name || sid, total: 0, count: 0 };
+      acc[sid].total += (s.total || 0);
+      acc[sid].count++;
+      return acc;
+    }, {})).sort(function(a, b){ return b.total - a.total; }).slice(0, 5),
     chart_harian: chartHarian,
     chart_bulanan: chartBulanan,
     total_sales: sales.count, total_customers: customers.count,
@@ -1775,6 +1817,7 @@ bridge._actions['generateReport'] = async (params) => {
       const result = (data || []).map(function(s) {
         const p = s.products || {};
         return {
+          produk_kode: p.code || s.product_id,
           produk_nama: p.name || s.product_id,
           batch: s.batch_number || '',
           qty_masuk: s.qty_in || 0,
@@ -1792,6 +1835,7 @@ bridge._actions['generateReport'] = async (params) => {
         const p = s.products || {};
         return {
           customer_nama: c.store_name || c.name || s.customer_id,
+          produk_kode: p.code || s.product_id,
           produk_nama: p.name || s.product_id,
           qty_titip_awal: s.qty_consigned || 0,
           qty_terjual: s.qty_sold || 0,
@@ -1900,8 +1944,8 @@ bridge._actions['getVisitReminders'] = async () => {
   var salesIds = [...new Set(customers.map(function(c){ return c.sales_id; }).filter(Boolean))];
   var salesMap = {};
   if (salesIds.length) {
-    var { data: sales } = await _supabase.from('sales').select('id, full_name, nama').in('id', salesIds);
-    (sales || []).forEach(function(s){ salesMap[s.id] = s.full_name || s.nama || ''; });
+    var { data: sales } = await _supabase.from('sales').select('id, full_name').in('id', salesIds);
+    (sales || []).forEach(function(s){ salesMap[s.id] = s.full_name || ''; });
   }
 
   var cIds = customers.map(function(c){ return c.id; });

@@ -934,6 +934,7 @@ window.addEventListener('popstate', function(e) {
   if (_backExitTimeout) {
     clearTimeout(_backExitTimeout);
     _backExitTimeout = null;
+    window.history.back();
   } else {
     toast('Tekan sekali lagi untuk keluar');
     _backExitTimeout = setTimeout(function() { _backExitTimeout = null; }, 2000);
@@ -1025,10 +1026,10 @@ function _loadStokGudangDetail(){
     if(!data.length){el.innerHTML='<p style="color:var(--text-light)">Stok gudang kosong.</p>';return}
     var total=data.reduce(function(s,i){return s+(i.qty_remaining||0)},0);
     var html='<p style="margin-bottom:8px;color:var(--text-light)">Total <strong>'+data.length+'</strong> produk, <strong>'+total+'</strong> pcs</p>';
-    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Sisa</th></tr></thead><tbody>';
+    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>ID Produk</th><th>Produk</th><th>Batch</th><th>Sisa</th></tr></thead><tbody>';
     data.forEach(function(s){
       var prod=s.products||{};
-      html+='<tr><td>'+(prod.name||s.produk_id||'')+'</td><td>'+(s.batch||s.batch_number||'-')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
+      html+='<tr><td style="font-size:11px;color:var(--text-light)">'+(prod.code||s.produk_id||'')+'</td><td>'+(prod.name||'')+'</td><td>'+(s.batch||s.batch_number||'-')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
     });
     html+='</tbody></table></div>';
     el.innerHTML=html;
@@ -1042,9 +1043,10 @@ function _loadStokKonsinyasiDetail(){
     if(!data.length){el.innerHTML='<p style="color:var(--text-light)">Tidak ada stok konsinyasi.</p>';return}
     var total=data.reduce(function(s,i){return s+(i.qty_remaining||0)},0);
     var html='<p style="margin-bottom:8px;color:var(--text-light)">Total <strong>'+data.length+'</strong> produk, <strong>'+total+'</strong> pcs</p>';
-    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Produk</th><th>Toko</th><th>Sisa</th></tr></thead><tbody>';
+    html+='<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>ID Produk</th><th>Produk</th><th>Toko</th><th>Sisa</th></tr></thead><tbody>';
     data.forEach(function(s){
-      html+='<tr><td>'+(s.produk_nama||s.product_name||'')+'</td><td>'+(s.customer_nama||s.customer_name||'')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
+      var prod=s.products||{};
+      html+='<tr><td style="font-size:11px;color:var(--text-light)">'+(prod.code||s.produk_id||'')+'</td><td>'+(prod.name||'')+'</td><td>'+(s.customer_nama||s.customer_name||'')+'</td><td><strong>'+(s.qty_remaining||0)+'</strong></td></tr>';
     });
     html+='</tbody></table></div>';
     el.innerHTML=html;
@@ -1788,6 +1790,20 @@ function showCustomerForm(c){
   showModal(html);
 
   loadSalesDropdown('fCustSales', c.sales_id||'');
+
+  // Auto-fill latitude & longitude via Geolocation API untuk customer baru
+  if (!isEdit && !lat && !lng) {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        var latInp = document.getElementById('fCustLat');
+        var lngInp = document.getElementById('fCustLng');
+        if (latInp) latInp.value = pos.coords.latitude.toFixed(6);
+        if (lngInp) lngInp.value = pos.coords.longitude.toFixed(6);
+      }, function(err) {
+        console.log('[Geo] Gagal获取 lokasi:', err.message);
+      }, { enableHighAccuracy: true, timeout: 10000 });
+    }
+  }
 }
 
 function previewCustFoto(){
@@ -2880,10 +2896,10 @@ function showStokGudang(){
     if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
     var data=r.data||[];
     if(data.length===0){el.innerHTML='<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>';return}
-    var html='<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
+    var html='<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>ID Produk</th><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
       var prod = s.products || {};
-      html += '<tr><td>' + (prod.name || s.produk_id || '') + '</td><td>' + (s.batch || s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
+      html += '<tr><td style="font-size:11px;color:var(--text-light)">' + (prod.code || s.produk_id || '') + '</td><td>' + (prod.name || '') + '</td><td>' + (s.batch || s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
       html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokGudang(\'' + s.id + '\')" title="Edit">✏️</button> ';
       html += '<button class="btn btn-sm btn-danger" onclick="hapusStokGudang(\'' + s.id + '\')" title="Hapus">🗑️</button></td>';
       html += '</tr>';
@@ -2905,10 +2921,10 @@ function showStokKonsinyasi(){
       var data=r.data||[];
       var html='<div class="form-group" style="max-width:300px"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
       if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', '');return}
-      html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
+      html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>ID Produk</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
       data.forEach(function(s){
         var cust=s.customers||{}, prod=s.products||{}, sal=s.sales||{};
-        html+='<tr><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(sal.full_name||s.sales_id||'')+'</td><td>'+(prod.name||s.produk_id||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>';
+        html+='<tr><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(sal.full_name||s.sales_id||'')+'</td><td style="font-size:11px;color:var(--text-light)">'+(prod.code||s.produk_id||'')+'</td><td>'+(prod.name||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>';
       });
       html+='</tbody></table></div></div>';
       el.innerHTML=html;
@@ -3601,10 +3617,10 @@ function showStokGudangSales() {
     if (!r.success) { el.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
     var data = r.data || [];
     if (data.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Stok gudang kosong.</p></div>'; return; }
-    var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
+    var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>ID Produk</th><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
       var prod = s.products || {};
-      html += '<tr><td>' + (prod.name || s.produk_id || '') + '</td><td>' + (s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
+      html += '<tr><td style="font-size:11px;color:var(--text-light)">' + (prod.code || s.produk_id || '') + '</td><td>' + (prod.name || '') + '</td><td>' + (s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
       var role = (CURRENT_USER || {}).role;
       if (role === 'OWNER') {
         html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokGudang(\'' + s.id + '\')" title="Edit">✏️</button> ';
@@ -3625,11 +3641,11 @@ function showStokKonsinyasiSales() {
     if (!r.success) { el.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
     var data = r.data || [];
     if (data.length === 0) { el.innerHTML = '<div class="card"><p style="color:var(--text-light)">Tidak ada stok konsinyasi.</p></div>'; return; }
-    var html = '<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Toko</th><th>Produk</th><th>Awal</th><th>Terjual</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
+    var html = '<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Toko</th><th>ID Produk</th><th>Produk</th><th>Awal</th><th>Terjual</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
       var cust = s.customers || {};
       var prod = s.products || {};
-      html += '<tr><td>' + (cust.store_name || s.customer_id || '') + '</td><td>' + (prod.name || s.produk_id || '') + '</td><td>' + (s.qty_titip_awal || 0) + '</td><td>' + (s.qty_terjual || 0) + '</td><td><strong>' + (s.qty_sisa || 0) + '</strong></td>';
+      html += '<tr><td>' + (cust.store_name || s.customer_id || '') + '</td><td style="font-size:11px;color:var(--text-light)">' + (prod.code || s.produk_id || '') + '</td><td>' + (prod.name || '') + '</td><td>' + (s.qty_titip_awal || 0) + '</td><td>' + (s.qty_terjual || 0) + '</td><td><strong>' + (s.qty_sisa || 0) + '</strong></td>';
       var role = (CURRENT_USER || {}).role;
       if (role === 'OWNER') {
         html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokKonsinyasi(\'' + s.id + '\')" title="Edit">✏️</button> ';
@@ -3933,8 +3949,9 @@ function initKomisi() {
       // Action Toolbar
       html += '<div class="card" style="padding:10px 16px;margin-bottom:12px">';
       html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
-      html += '<div class="search-bar" style="margin:0;flex:1;min-width:160px;max-width:300px">';
-      html += '<input id="komisiSearch" placeholder="Cari sales/invoice..." oninput="searchTable(\'komisiSearch\',\'komisiTable\')" style="padding-left:32px;min-height:36px;font-size:13px">';
+      html += '<div style="position:relative;flex:1;min-width:160px;max-width:300px">';
+      html += '<input id="komisiSalesFilter" placeholder="Cari sales..." oninput="komisiSalesAutocomplete(this.value)" style="padding:8px 10px;min-height:36px;font-size:13px;width:100%;box-sizing:border-box" autocomplete="off">';
+      html += '<div id="komisiSalesDropdown" style="position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;max-height:200px;overflow-y:auto;display:none;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1)"></div>';
       html += '</div>';
       html += '<select id="komisiStatusFilter" onchange="filterKomisiTable()" style="width:auto;min-width:130px;padding:8px 10px;font-size:12px;min-height:36px">';
       html += '<option value="">Semua Status</option><option value="READY">Siap Cair</option><option value="PAID">Sudah Cair</option>';
@@ -3949,7 +3966,7 @@ function initKomisi() {
       data.forEach(function(k) {
         var st = k.status || 'READY';
         var tglCair = k.tanggal_cair ? k.tanggal_cair.substring(0,10) : '';
-        html += '<tr><td>'+(st==='READY'?'<input type="checkbox" class="komisiCb" value="'+k.komisi_id+'">':'')+'</td>';
+        html += '<tr data-sales-id="'+(k.sales_id||'')+'"><td>'+(st==='READY'?'<input type="checkbox" class="komisiCb" value="'+k.komisi_id+'">':'')+'</td>';
         html += '<td><strong>'+(salesMap[k.sales_id]||k.sales_id||'')+'</strong></td>';
         html += '<td style="font-size:11px;color:var(--text-light)">'+(k.invoice_id||'')+'</td>';
         html += '<td class="text-right"><strong>Rp '+fmt(k.nilai_komisi||0)+'</strong></td>';
@@ -3965,16 +3982,62 @@ function initKomisi() {
   });
 }
 
+var _komisiSalesFilter = '';
+
 function filterKomisiTable() {
   var status = document.getElementById('komisiStatusFilter').value;
   var rows = document.querySelectorAll('#komisiTable tbody tr');
   rows.forEach(function(r){
-    if (!status) { r.style.display=''; return; }
-    var stEl = r.querySelector('.badge-success,.badge-warning');
-    var st = stEl ? stEl.textContent.trim() : '';
-    r.style.display = (st===status) ? '' : 'none';
+    var show = true;
+    if (status) {
+      var stEl = r.querySelector('.badge-success,.badge-warning');
+      var st = stEl ? stEl.textContent.trim() : '';
+      if (st !== status) show = false;
+    }
+    if (show && _komisiSalesFilter) {
+      if (r.getAttribute('data-sales-id') !== _komisiSalesFilter) show = false;
+    }
+    r.style.display = show ? '' : 'none';
   });
 }
+
+function komisiSalesAutocomplete(query) {
+  var dropdown = document.getElementById('komisiSalesDropdown');
+  if (!query.trim()) {
+    _komisiSalesFilter = '';
+    filterKomisiTable();
+    dropdown.style.display = 'none';
+    return;
+  }
+  var salesData = (getCached('salesList', 300) || {}).data || [];
+  var q = query.toLowerCase();
+  var matches = salesData.filter(function(s){
+    return (s.full_name || s.nama || '').toLowerCase().indexOf(q) >= 0;
+  });
+  if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+  var html = '';
+  matches.forEach(function(s){
+    var name = s.full_name || s.nama || s.sales_id || '';
+    var id = s.sales_id || '';
+    html += '<div style="padding:8px 12px;cursor:pointer;font-size:13px" onmouseover="this.style.background=\'var(--hover)\'" onmouseout="this.style.background=\'transparent\'" onclick="komisiPilihSales(\''+id+'\',\''+name.replace(/'/g,"\\'")+'\')">'+name+'</div>';
+  });
+  dropdown.innerHTML = html;
+  dropdown.style.display = 'block';
+}
+
+function komisiPilihSales(salesId, salesName) {
+  document.getElementById('komisiSalesFilter').value = salesName;
+  document.getElementById('komisiSalesDropdown').style.display = 'none';
+  _komisiSalesFilter = salesId;
+  filterKomisiTable();
+}
+
+document.addEventListener('click', function(e) {
+  var dd = document.getElementById('komisiSalesDropdown');
+  if (dd && !e.target.closest('#komisiSalesFilter') && !e.target.closest('#komisiSalesDropdown')) {
+    dd.style.display = 'none';
+  }
+});
 function toggleAllKomisi() {
   var all = document.getElementById('komisiAll').checked;
   document.querySelectorAll('.komisiCb').forEach(function(cb){cb.checked = all;});
@@ -4169,8 +4232,8 @@ function renderLaporan(el, type, data) {
     case 'laba_kotor': title='📈 Laba Kotor';headers=['Periode','Penjualan','HPP','Laba Kotor'];arr.forEach(function(h){rows.push([h.periode||'','Rp '+fmt(h.total_penjualan||0),'Rp '+fmt(h.total_hpp||0),'Rp '+fmt(h.laba_kotor||0)])});break;
     case 'laba_bersih': title='📉 Laba Bersih';headers=['Item','Nilai'];if(arr.length){var d=arr[0];rows.push(['Total Penjualan','Rp '+fmt(d.total_penjualan||0)]);rows.push(['Laba Kotor','Rp '+fmt(d.total_laba_kotor||0)]);rows.push(['Biaya Operasional','Rp '+fmt(d.total_biaya_operasional||0)]);rows.push(['Laba Bersih','Rp '+fmt(d.laba_bersih||0)]);};break;
     case 'omzet': title='💵 Omzet Report';headers=['Item','Nilai'];rows.push(['Periode',(data.periode_mulai||'')+' s/d '+(data.periode_selesai||'')]);rows.push(['Total Omzet','Rp '+fmt(data.omzet||0)]);rows.push(['Lunas','Rp '+fmt(data.lunas||0)]);rows.push(['Piutang','Rp '+fmt(data.piutang||0)]);break;
-    case 'stok_gudang': title='🏭 Stok Gudang';headers=['Produk','Batch','Masuk','Keluar','Sisa'];arr.forEach(function(s){rows.push([s.produk_nama||s.produk_id||'',s.batch||'',s.qty_masuk||0,s.qty_keluar||0,s.qty_sisa||0])});break;
-    case 'stok_konsinyasi': title='📋 Stok Konsinyasi';headers=['Customer','Produk','Awal','Terjual','Sisa'];arr.forEach(function(s){rows.push([s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.qty_titip_awal||0,s.qty_terjual||0,s.qty_sisa||0])});break;
+    case 'stok_gudang': title='🏭 Stok Gudang';headers=['ID Produk','Produk','Batch','Masuk','Keluar','Sisa'];arr.forEach(function(s){rows.push([s.produk_kode||s.produk_id||'',s.produk_nama||s.produk_id||'',s.batch||'',s.qty_masuk||0,s.qty_keluar||0,s.qty_sisa||0])});break;
+    case 'stok_konsinyasi': title='📋 Stok Konsinyasi';headers=['ID Produk','Customer','Produk','Awal','Terjual','Sisa'];arr.forEach(function(s){rows.push([s.produk_kode||s.produk_id||'',s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.qty_titip_awal||0,s.qty_terjual||0,s.qty_sisa||0])});break;
     case 'forecast_restock': title='🚚 Forecast Restock';headers=['Customer','Produk','Sisa','Target','Restock'];arr.forEach(function(s){rows.push([s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.sisa_stok||0,s.target_display||0,s.rekomendasi_restock||0])});break;
     case 'kunjungan_harian': title='📅 Kunjungan Harian';headers=['Sales','Toko','Jam Mulai','Jam Selesai','Status','Invoice'];arr.forEach(function(v){rows.push([v.sales_nama||'',v.customer_nama||'',v.jam_mulai||'',v.jam_selesai||'',v.status||'','Rp '+fmt(v.total_invoice||0)])});break;
   }
@@ -4219,8 +4282,8 @@ function downloadCSV(type) {
       laba_kotor: {t:'Laba Kotor',h:['Periode','Total','Laba','Margin'],f:function(h){return[h.label||'','Rp '+fmt(h.total||0),'Rp '+fmt(h.laba||0),h.margin||'0%']}},
       laba_bersih: {t:'Laba Bersih',h:['Item','Nilai'],f:function(d){var k=['omzet','laba_kotor','biaya','laba_bersih'];return k.map(function(x){return[x,'Rp '+fmt((d||{})[x]||0)]})}},
       omzet: {t:'Omzet',h:['Item','Nilai'],f:function(d){return[['Omzet','Rp '+fmt((d||{}).omzet||0)],['Bulan Ini','Rp '+fmt((d||{}).bulan_ini||0)],['Tahun Ini','Rp '+fmt((d||{}).tahun_ini||0)],['Rata-rata','Rp '+fmt((d||{}).rata_rata||0)]]}},
-      stok_gudang: {t:'Stok Gudang',h:['Produk','Masuk','Keluar','Sisa'],f:function(s){return[s.produk_nama||s.produk_id||'',s.total_masuk||0,s.total_keluar||0,s.total_sisa||0]}},
-      stok_konsinyasi: {t:'Stok Konsinyasi',h:['Customer','Produk','Awal','Terjual','Retur','Sisa'],f:function(s){return[s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.qty_titip_awal||0,s.qty_terjual||0,s.qty_retur||0,s.qty_sisa||0]}},
+      stok_gudang: {t:'Stok Gudang',h:['ID Produk','Produk','Masuk','Keluar','Sisa'],f:function(s){return[s.produk_kode||s.produk_id||'',s.produk_nama||s.produk_id||'',s.total_masuk||0,s.total_keluar||0,s.total_sisa||0]}},
+      stok_konsinyasi: {t:'Stok Konsinyasi',h:['ID Produk','Customer','Produk','Awal','Terjual','Retur','Sisa'],f:function(s){return[s.produk_kode||s.produk_id||'',s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.qty_titip_awal||0,s.qty_terjual||0,s.qty_retur||0,s.qty_sisa||0]}},
       forecast_restock: {t:'Forecast Restock',h:['Customer','Produk','Sisa','Target','Restock'],f:function(s){return[s.customer_nama||s.customer_id||'',s.produk_nama||s.produk_id||'',s.sisa_stok||0,s.target_display||0,s.rekomendasi_restock||0]}},
       kunjungan_harian: {t:'Kunjungan Harian',h:['Sales','Toko','Jam Mulai','Jam Selesai','Status','Invoice'],f:function(v){return[v.sales_nama||'',v.customer_nama||'',v.jam_mulai||'',v.jam_selesai||'',v.status||'','Rp '+fmt(v.total_invoice||0)]}}
     };
