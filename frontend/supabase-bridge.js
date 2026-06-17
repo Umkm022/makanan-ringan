@@ -642,6 +642,7 @@ bridge._actions['updateSalesPassword'] = async (params) => {
 
 bridge._actions['updateSales'] = async (params) => {
   const d = params.data || params;
+  var salesId = d.id || params.id;
   const { data, error } = await _supabase.from('sales').update({
     full_name: d.full_name,
     phone: d.phone,
@@ -650,7 +651,7 @@ bridge._actions['updateSales'] = async (params) => {
     komisi_rate: d.komisi_rate,
     target_bulanan: d.target_bulanan,
     status: d.status,
-  }).eq('id', d.id).select().single();
+  }).eq('id', salesId).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Sales berhasil diupdate');
 };

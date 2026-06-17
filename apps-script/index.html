@@ -3852,7 +3852,8 @@ function simpanSalesEdit(id) {
           });
         } else {
           closeModal();
-          toast('✅ Sales berhasil diupdate (password tidak diubah)');
+          if (!r2.success) { toast('Sales diupdate, tapi gagal ambil data auth: ' + (r2.message || '')); }
+          else { toast('✅ Sales berhasil diupdate (password tidak diubah - auth_id tidak ditemukan)'); }
           invalidateCache('sales-list'); initSalesList(true);
         }
       });
