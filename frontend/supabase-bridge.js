@@ -1165,7 +1165,8 @@ bridge._actions['getInvoiceDetail'] = async (params) => {
   if (error) return fail(error.message);
   const { data: payments } = await _supabase.from('payments').select('*').eq('invoice_id', d.id).order('payment_date', { ascending: false });
   const { data: receivables } = await _supabase.from('receivables').select('*').eq('invoice_id', d.id);
-  return ok({ invoice: inv, payments: payments || [], receivables: receivables || [] });
+  const { data: details } = await _supabase.from('invoice_details').select('*, products(*)').eq('invoice_id', d.id);
+  return ok({ invoice: inv, payments: payments || [], receivables: receivables || [], details: details || [] });
 };
 
 bridge._actions['getPiutang'] = async () => {

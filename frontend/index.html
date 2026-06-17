@@ -1684,7 +1684,8 @@ bridge._actions['getInvoiceDetail'] = async (params) => {
   if (error) return fail(error.message);
   const { data: payments } = await _supabase.from('payments').select('*').eq('invoice_id', d.id).order('payment_date', { ascending: false });
   const { data: receivables } = await _supabase.from('receivables').select('*').eq('invoice_id', d.id);
-  return ok({ invoice: inv, payments: payments || [], receivables: receivables || [] });
+  const { data: details } = await _supabase.from('invoice_details').select('*, products(*)').eq('invoice_id', d.id);
+  return ok({ invoice: inv, payments: payments || [], receivables: receivables || [], details: details || [] });
 };
 
 bridge._actions['getPiutang'] = async () => {
@@ -6068,10 +6069,12 @@ function thermalPrintInvoice(){
   var st = (inv.status || '').toUpperCase();
   var totalBayar = payments.reduce(function(s, p) { return s + (p.amount || 0); }, 0);
   var itemsHtml = '';
-  if (inv.items && inv.items.length) {
+  var details = data.details || [];
+  if (details.length) {
     itemsHtml += '<table style="width:100%;border-collapse:collapse;margin-bottom:8px"><tr style="font-weight:600"><th style="text-align:left;padding:4px">Item</th><th style="text-align:right;padding:4px">Qty</th><th style="text-align:right;padding:4px">Harga</th><th style="text-align:right;padding:4px">Subtotal</th></tr>';
-    inv.items.forEach(function(it){
-      itemsHtml += '<tr><td style="padding:2px 4px">' + (it.name || it.nama_produk || it.produk_id || '') + '</td><td style="text-align:right;padding:2px 4px">' + (it.qty || 0) + '</td><td style="text-align:right;padding:2px 4px">' + fmt(it.price || it.harga || 0) + '</td><td style="text-align:right;padding:2px 4px">' + fmt((it.qty||0)*(it.price||it.harga||0)) + '</td></tr>';
+    details.forEach(function(it){
+      var prod = it.products || {};
+      itemsHtml += '<tr><td style="padding:2px 4px">' + (prod.name || it.product_id || '') + '</td><td style="text-align:right;padding:2px 4px">' + (it.qty || 0) + '</td><td style="text-align:right;padding:2px 4px">' + fmt(it.price || 0) + '</td><td style="text-align:right;padding:2px 4px">' + fmt(it.subtotal || 0) + '</td></tr>';
     });
     itemsHtml += '</table>';
   }
