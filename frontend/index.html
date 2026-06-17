@@ -449,7 +449,7 @@ body.sales-layout .tabbar{display:flex !important}
   .kpi-card{box-shadow:none!important;border:1px solid #ddd}
   .dark .card{background:#fff!important;color:#000!important}
   .dark td,.dark th{border-bottom-color:#ccc!important}
-  .modal-content{position:static!important;transform:none!important;max-width:100%!important;box-shadow:none!important;border:none!important;padding:0!important;margin:0!important}
+  #modalContent{position:static!important;transform:none!important;max-width:100%!important;box-shadow:none!important;border:none!important;padding:0!important;margin:0!important}
   .invoice-print-area{display:block!important}
   .invoice-print-area .btn{display:none!important}
 }
@@ -5964,7 +5964,7 @@ function showInvoiceDetail(id) {
   var html = '<div class="loading">Memuat detail invoice...</div>';
   showModal(html);
   api('getInvoiceDetail', { id: id }, function(r) {
-    if (!r.success) { document.querySelector('.modal-content').innerHTML = '<h3>Error</h3><p>' + (r.message || '') + '</p><div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Tutup</button></div>'; return; }
+    if (!r.success) { document.getElementById('modalContent').innerHTML = '<h3>Error</h3><p>' + (r.message || '') + '</p><div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Tutup</button></div>'; return; }
     var inv = r.data.invoice || {};
     var payments = r.data.payments || [];
     var cust = inv.customers || {};
@@ -5997,8 +5997,7 @@ function showInvoiceDetail(id) {
     html += '<button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>';
     html += '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>';
     html += '</div></div>';
-    var mc = document.querySelector('.modal-content');
-    if (mc) mc.innerHTML = html;
+    document.getElementById('modalContent').innerHTML = html;
   });
 }
 
