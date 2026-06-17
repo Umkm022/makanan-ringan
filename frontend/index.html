@@ -2179,6 +2179,19 @@ bridge._actions['updateSetting'] = async (params) => {
   if (error) return fail(error.message);
   return ok(data, 'Setting berhasil diupdate');
 };
+bridge._actions['upsertSetting'] = async (params) => {
+  const d = params.data || params;
+  const { data: existing } = await _supabase.from('settings').select('id').eq('key', d.key).maybeSingle();
+  if (existing) {
+    const { data, error } = await _supabase.from('settings').update({ value: String(d.value) }).eq('id', existing.id).select().single();
+    if (error) return fail(error.message);
+    return ok(data, 'Setting diupdate');
+  } else {
+    const { data, error } = await _supabase.from('settings').insert({ key: d.key, value: String(d.value) }).select().single();
+    if (error) return fail(error.message);
+    return ok(data, 'Setting ditambahkan');
+  }
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // REPORT ACTIONS
@@ -5335,13 +5348,49 @@ function wizardSaveStok(){
 }
 
 // ====== OLD SETUP FUNCTIONS ======
+function thermalPrintSettingsForm(data){
+  var paper=data.thermal_paper||'80mm';
+  var fontSize=data.thermal_font||'12';
+  var showLogo=data.thermal_show_logo;
+  var showAddr=data.thermal_show_address;
+  var margin=data.thermal_margin||'5';
+  var html='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:8px 0">';
+  html+='<div class="form-group"><label>Ukuran Kertas</label><select id="thPaper" onchange="saveThermalSetting(\'thermal_paper\',this.value)">';
+  html+='<option value="58mm"'+(paper==='58mm'?' selected':'')+'>58 mm</option>';
+  html+='<option value="80mm"'+(paper==='80mm'?' selected':'')+'>80 mm</option>';
+  html+='</select></div>';
+  html+='<div class="form-group"><label>Ukuran Font</label><select id="thFont" onchange="saveThermalSetting(\'thermal_font\',this.value)">';
+  html+='<option value="10"'+(fontSize==='10'?' selected':'')+'>10px</option>';
+  html+='<option value="12"'+(fontSize==='12'?' selected':'')+'>12px</option>';
+  html+='<option value="14"'+(fontSize==='14'?' selected':'')+'>14px</option>';
+  html+='</select></div>';
+  html+='<div class="form-group"><label>Margin (mm)</label><input type="number" id="thMargin" value="'+margin+'" min="0" max="20" onchange="saveThermalSetting(\'thermal_margin\',this.value)"></div>';
+  html+='<div class="form-check" style="display:flex;flex-direction:column;gap:6px;padding-top:20px">';
+  html+='<label><input type="checkbox" id="thLogo" '+(showLogo==='true'||showLogo===true?'checked':'')+' onchange="saveThermalSetting(\'thermal_show_logo\',this.checked?\'true\':\'\')"> Tampilkan Logo</label>';
+  html+='<label><input type="checkbox" id="thAddr" '+(showAddr==='true'||showAddr===true?'checked':'')+' onchange="saveThermalSetting(\'thermal_show_address\',this.checked?\'true\':\'\')"> Tampilkan Alamat</label>';
+  html+='</div></div>';
+  return html;
+}
+function saveThermalSetting(key,val){
+  api('upsertSetting',{key:key,value:val},function(r){
+    if(r.success)toast('✅ Pengaturan print tersimpan');
+    else toast('Error: '+r.message);
+  });
+}
+
 function loadSettings(){
   var el=document.getElementById('settingsArea');
   api('getAllSettings',{},function(r){
     if(!r.success){el.innerHTML='<p style="color:var(--error)">Gagal memuat</p>';return}
     var data=r.data||{};
-    var html='<div class="table-wrap"><table><thead><tr><th>Kunci</th><th>Nilai</th><th>Aksi</th></tr></thead><tbody>';
+
+    var html='<details style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;padding:4px 0">🖨️ Thermal Print</summary>';
+    html+=thermalPrintSettingsForm(data);
+    html+='</details>';
+
+    html+='<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Kunci</th><th>Nilai</th><th>Aksi</th></tr></thead><tbody>';
     Object.keys(data).forEach(function(k){
+      if(['thermal_paper','thermal_font','thermal_show_logo','thermal_show_address','thermal_margin'].indexOf(k)>-1)return;
       html+='<tr><td><strong>'+k+'</strong></td><td><span id="sv_'+k+'">'+(data[k]||'')+'</span></td>';
       html+='<td><button class="btn btn-sm btn-outline" onclick="editSetting(\''+k+'\',\''+(data[k]||'')+'\')" title="Edit">✏️</button></td></tr>';
     });
@@ -5964,6 +6013,7 @@ function renderInvTable(el, data) {
   el.innerHTML = html;
 }
 
+var _lastInvoiceData = null;
 function showInvoiceDetail(id) {
   var html = '<div class="loading">Memuat detail invoice...</div>';
   document.getElementById('modalOverlay').classList.add('invoice-detail');
@@ -5999,10 +6049,91 @@ function showInvoiceDetail(id) {
       html += '<div class="card" style="margin-bottom:12px"><p style="color:var(--text-light);padding:8px 0">Belum ada pembayaran.</p></div>';
     }
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
-    html += '<button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>';
+    html += '<button class="btn btn-primary" onclick="thermalPrintInvoice()">🖨️ Print</button>';
     html += '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>';
     html += '</div></div>';
+    _lastInvoiceData = r.data;
     document.getElementById('modalContent').innerHTML = html;
+  });
+}
+
+function thermalPrintInvoice(){
+  var data = _lastInvoiceData;
+  if (!data) { toast('Data invoice tidak tersedia'); return; }
+  var inv = data.invoice || {};
+  var payments = data.payments || [];
+  var cust = inv.customers || {};
+  var sales = inv.sales || {};
+  var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : (inv.created_at ? inv.created_at.substring(0, 10) : '');
+  var st = (inv.status || '').toUpperCase();
+  var totalBayar = payments.reduce(function(s, p) { return s + (p.amount || 0); }, 0);
+  var itemsHtml = '';
+  if (inv.items && inv.items.length) {
+    itemsHtml += '<table style="width:100%;border-collapse:collapse;margin-bottom:8px"><tr style="font-weight:600"><th style="text-align:left;padding:4px">Item</th><th style="text-align:right;padding:4px">Qty</th><th style="text-align:right;padding:4px">Harga</th><th style="text-align:right;padding:4px">Subtotal</th></tr>';
+    inv.items.forEach(function(it){
+      itemsHtml += '<tr><td style="padding:2px 4px">' + (it.name || it.nama_produk || it.produk_id || '') + '</td><td style="text-align:right;padding:2px 4px">' + (it.qty || 0) + '</td><td style="text-align:right;padding:2px 4px">' + fmt(it.price || it.harga || 0) + '</td><td style="text-align:right;padding:2px 4px">' + fmt((it.qty||0)*(it.price||it.harga||0)) + '</td></tr>';
+    });
+    itemsHtml += '</table>';
+  }
+  payments.sort(function(a,b){return (a.payment_date||'').localeCompare(b.payment_date||'');});
+  var payHtml = '';
+  if (payments.length) {
+    payHtml += '<table style="width:100%;border-collapse:collapse;margin-bottom:8px"><tr style="font-weight:600"><th style="text-align:left;padding:4px">Tgl</th><th style="text-align:right;padding:4px">Jumlah</th><th style="text-align:left;padding:4px">Metode</th></tr>';
+    payments.forEach(function(p){
+      var pt = p.payment_date ? p.payment_date.substring(0, 10) : '';
+      payHtml += '<tr><td style="padding:2px 4px">' + pt + '</td><td style="text-align:right;padding:2px 4px">Rp ' + fmt(p.amount || 0) + '</td><td style="padding:2px 4px">' + (p.method || '-') + '</td></tr>';
+    });
+    payHtml += '<tr style="font-weight:700"><td style="padding:2px 4px;border-top:2px solid #000">Total Dibayar</td><td style="text-align:right;padding:2px 4px;border-top:2px solid #000">Rp ' + fmt(totalBayar) + '</td><td style="border-top:2px solid #000"></td></tr>';
+    payHtml += '</table>';
+  }
+  var printContent = '';
+  printContent += '<div style="text-align:center;margin-bottom:8px">';
+  if ((inv.thermal_show_logo !== 'false' && inv.thermal_show_logo !== false)) {
+    printContent += '<div style="font-size:16px;font-weight:700;margin-bottom:4px">SUPPLIER SEBLAK</div>';
+  }
+  if ((inv.thermal_show_address !== 'false' && inv.thermal_show_address !== false)) {
+    printContent += '<div style="font-size:10px;color:#666;margin-bottom:4px">Jl. Contoh No. 123, Kota</div>';
+  }
+  printContent += '<div style="font-size:12px;margin-bottom:4px">Invoice: ' + (inv.id || '').substring(0,8) + '</div>';
+  printContent += '<div style="font-size:11px;color:#666">' + tgl + '</div>';
+  printContent += '</div>';
+  printContent += '<hr style="border-top:1px dashed #000;margin:8px 0">';
+  printContent += '<div style="margin-bottom:8px">';
+  printContent += '<div>Customer: ' + (cust.store_name || cust.name || inv.customer_id || '-') + '</div>';
+  printContent += '<div>Sales: ' + (sales.full_name || sales.name || inv.sales_id || '-') + '</div>';
+  if (cust.address) printContent += '<div style="font-size:10px;color:#666">' + cust.address + '</div>';
+  printContent += '</div>';
+  printContent += '<hr style="border-top:1px dashed #000;margin:8px 0">';
+  printContent += itemsHtml;
+  printContent += '<hr style="border-top:1px dashed #000;margin:8px 0">';
+  printContent += '<div style="text-align:right;font-size:14px;font-weight:700;margin-bottom:8px">Total: Rp ' + fmt(inv.total || 0) + '</div>';
+  printContent += '<div style="text-align:right;margin-bottom:8px">Status: ' + st + '</div>';
+  if (payHtml) {
+    printContent += '<hr style="border-top:1px dashed #000;margin:8px 0">';
+    printContent += '<div style="font-weight:600;margin-bottom:4px">Riwayat Pembayaran</div>';
+    printContent += payHtml;
+  }
+  api('getAllSettings',{},function(settingsR){
+    var settings = settingsR.data || {};
+    var paper = settings.thermal_paper || '80mm';
+    var fontSize = settings.thermal_font || '12';
+    var margin = settings.thermal_margin || '5';
+    var width = paper === '58mm' ? '58mm' : '80mm';
+    var w = document.open();
+    w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Print Invoice</title>');
+    w.document.write('<style>');
+    w.document.write('*{margin:0;padding:0;box-sizing:border-box}');
+    w.document.write('body{font-family:"Courier New",monospace;font-size:' + fontSize + 'px;width:' + width + ';margin:0 auto;padding:' + margin + 'mm;color:#000;background:#fff}');
+    w.document.write('table{width:100%;border-collapse:collapse}');
+    w.document.write('th,td{text-align:left;padding:2px 4px}');
+    w.document.write('hr{border:none;border-top:1px dashed #000;margin:6px 0}');
+    w.document.write('@media print{@page{margin:0}body{padding:' + margin + 'mm}}');
+    w.document.write('</style></head><body>');
+    w.document.write(printContent);
+    w.document.write('<div style="text-align:center;margin-top:12px;font-size:10px;color:#999">Terima kasih</div>');
+    w.document.write('</body></html>');
+    w.document.close();
+    setTimeout(function(){ w.print(); w.close(); }, 500);
   });
 }
 

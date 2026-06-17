@@ -1660,6 +1660,19 @@ bridge._actions['updateSetting'] = async (params) => {
   if (error) return fail(error.message);
   return ok(data, 'Setting berhasil diupdate');
 };
+bridge._actions['upsertSetting'] = async (params) => {
+  const d = params.data || params;
+  const { data: existing } = await _supabase.from('settings').select('id').eq('key', d.key).maybeSingle();
+  if (existing) {
+    const { data, error } = await _supabase.from('settings').update({ value: String(d.value) }).eq('id', existing.id).select().single();
+    if (error) return fail(error.message);
+    return ok(data, 'Setting diupdate');
+  } else {
+    const { data, error } = await _supabase.from('settings').insert({ key: d.key, value: String(d.value) }).select().single();
+    if (error) return fail(error.message);
+    return ok(data, 'Setting ditambahkan');
+  }
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // REPORT ACTIONS
