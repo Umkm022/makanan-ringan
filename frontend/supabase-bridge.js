@@ -730,20 +730,21 @@ bridge._actions['hardDeleteSales'] = async (params) => {
 
 bridge._actions['getAllKunjungan'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   let query = _supabase.from('visits').select('*, customers(*), sales(*)');
+  if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
+  else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
   if (d?.status) query = query.eq('status', d.status);
-  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
 };
 
 bridge._actions['getRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
-  const { data } = await _supabase
-    .from('visits')
-    .select('*, sales(full_name)')
-    .eq('customer_id', d.customer_id)
-    .order('created_at', { ascending: false });
+  const profile = await getCurrentProfile();
+  var q = _supabase.from('visits').select('*, sales(full_name)').eq('customer_id', d.customer_id);
+  if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
+  const { data } = await q.order('created_at', { ascending: false });
   return ok(data);
 };
 
@@ -759,10 +760,12 @@ bridge._actions['getRiwayatSales'] = async (params) => {
 
 bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   var q = _supabase.from('visits').select('*, customers(*), sales(*)');
-  if (d && d.salesId) q = q.eq('sales_id', d.salesId);
+  if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
+  else if (d && d.salesId) q = q.eq('sales_id', d.salesId);
   const { data } = await q.order('created_at', { ascending: false });
-  return ok((data || []).map(function(v){ return mapFields(v, visitMap); }));
+  return ok((data || []).map(function(v){ return mapFields(v, visitMap)); });
 };
 
 bridge._actions['getDraftKunjungan'] = async () => {
@@ -781,17 +784,27 @@ bridge._actions['startKunjungan'] = async (params) => {
   const { data: customer } = await _supabase.from('customers').select('*, sales(full_name)').eq('id', d.customerId).single();
   if (!customer) return fail('Customer tidak ditemukan');
   if (profile.role === 'SALES' && customer.sales_id !== profile.sales_id) return fail('Akses ditolak: bukan customer Anda');
+  const salesId = customer.sales_id;
   const { data: visit, error } = await _supabase.from('visits').insert({
-    customer_id: customer.id, sales_id: customer.sales_id,
+    customer_id: customer.id, sales_id: salesId,
     visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toTimeString().substring(0, 8),
     status: 'DRAFT', latitude: d.latitude || '', longitude: d.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
-  const { data: stokAll } = await _supabase.from('consignment_stock')      .select('*').eq('customer_id', customer.id);
+  const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.id);
   const { data: allProduk } = await _supabase.from('products').select('*').eq('is_active', true);
+  // Fetch approved stock request to pre-fill stok_dibawa
+  var stockBringMap = {};
+  var { data: approvedReq } = await _supabase.from('stock_requests').select('*, stock_request_items(*)')
+    .eq('customer_id', customer.id).eq('sales_id', salesId).eq('status', 'APPROVED').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (approvedReq && approvedReq.stock_request_items) {
+    for (var sri of approvedReq.stock_request_items) {
+      stockBringMap[sri.product_id] = sri.qty_approved || sri.qty_requested || 0;
+    }
+  }
   var produk = (allProduk || []).map(function(p) {
     var sk = (stokAll || []).filter(function(s) { return s.product_id === p.id; })[0] || {};
-    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_remaining || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.price || 0, hpp: p.hpp || 0 };
+    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_remaining || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.price || 0, hpp: p.hpp || 0, stok_dibawa: stockBringMap[p.id] || 0 };
   });
   return ok({ kunjungan_id: visit.id, customer: { customer_id: customer.id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
 };
@@ -810,7 +823,7 @@ bridge._actions['saveSisaStok'] = async (params) => {
     var { error } = await _supabase.from('visit_details').insert({
       visit_id: d.kunjunganId, product_id: item.produk_id, initial_stock: item.stok_awal, remaining: item.sisa_fisik,
       damaged: item.rusak || 0, returned: item.retur || 0, sold: terjual, target_display: item.target_display,
-      restock_recommendation: restock, price: item.harga_jual, subtotal: subtotal,
+      restock_recommendation: restock, price: item.harga_jual, subtotal: subtotal, stock_brought: item.stok_dibawa || 0,
     });
     if (error) return fail(error.message);
     totalTerjual += terjual; totalRetur += (item.retur || 0); totalInvoice += subtotal;
@@ -828,7 +841,7 @@ bridge._actions['resumeKunjungan'] = async (params) => {
   var customer = visit.customers ? { customer_id: visit.customers.id, store_name: visit.customers.store_name, owner_name: visit.customers.owner_name, address: visit.customers.address, kota: visit.customers.city } : {};
   var produk = (details || []).map(function(d) {
     var pr = (allProduk || []).filter(function(p) { return p.id === d.product_id; })[0] || {};
-    return { produk_id: d.product_id, nama_produk: pr.name || d.product_id, stok_awal: d.initial_stock, sisa_fisik: d.remaining, rusak: d.damaged, retur: d.returned, terjual: d.sold, target_display: d.target_display, rekomendasi_restock: d.restock_recommendation, harga_jual: d.price };
+    return { produk_id: d.product_id, nama_produk: pr.name || d.product_id, stok_awal: d.initial_stock, sisa_fisik: d.remaining, rusak: d.damaged, retur: d.returned, terjual: d.sold, target_display: d.target_display, rekomendasi_restock: d.restock_recommendation, harga_jual: d.price, stok_dibawa: d.stock_brought || 0 };
   });
   return ok({ kunjungan_id: visit.id, customer: customer, produk: produk, last_visit: visit.visit_date });
 };
@@ -844,16 +857,22 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   var paymentAmount = parseInt(d.paymentAmount) || 0;
   var paymentMethod = d.paymentMethod || 'TUNAI';
   for (var vd of details || []) {
+    var stockBrought = vd.stock_brought || 0;
     if (vd.sold > 0 || vd.damaged > 0 || vd.returned > 0) {
+      var newRemaining = vd.remaining + stockBrought;
       var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('product_id', vd.product_id).single();
-      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (vd.sold || 0), qty_returned: (existing.qty_returned || 0) + (vd.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (vd.damaged || 0), qty_remaining: vd.remaining }).eq('id', existing.id); }
-      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: vd.product_id, sales_id: salesId, qty_consigned: 0, qty_sold: vd.sold, qty_returned: vd.returned, qty_damaged: vd.damaged, qty_remaining: vd.remaining, target_display: vd.target_display }); }
+      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (vd.sold || 0), qty_returned: (existing.qty_returned || 0) + (vd.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (vd.damaged || 0), qty_consigned: (existing.qty_consigned || 0) + stockBrought, qty_remaining: newRemaining }).eq('id', existing.id); }
+      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: vd.product_id, sales_id: salesId, qty_consigned: stockBrought, qty_sold: vd.sold, qty_returned: vd.returned, qty_damaged: vd.damaged, qty_remaining: newRemaining, target_display: vd.target_display }); }
     }
     if (vd.returned > 0) {
       await _supabase.from('returns').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, product_id: vd.product_id, qty: vd.returned, reason: 'TIDAK_LAKU', condition: 'MASUK_GUDANG' });
       var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', vd.product_id).single();
       if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (vd.returned || 0), qty_remaining: (gudang.qty_remaining || 0) + (vd.returned || 0) }).eq('id', gudang.id); }
       else { await _supabase.from('warehouse_stock').insert({ product_id: vd.product_id, qty_in: vd.returned, qty_out: 0, qty_remaining: vd.returned, unit: 'PCS' }); }
+    }
+    if (stockBrought > 0) {
+      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', vd.product_id).single();
+      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_out: (gudang.qty_out || 0) + stockBrought, qty_remaining: Math.max(0, (gudang.qty_remaining || 0) - stockBrought) }).eq('id', gudang.id); }
     }
   }
   var invoiceId = null, paymentId = null;
@@ -875,7 +894,9 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
         var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
         if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
         else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
-        await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+        try { await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id); } catch(e) {
+          try { await _supabase.from('invoices').update({ notes: '##INV:' + invNum + '##' }).eq('id', inv.id); } catch(e2) {}
+        }
         inv.invoice_number = invNum;
       } catch(e) {}
       for (var dd of details || []) {
@@ -901,7 +922,26 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   }
   await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', visit.id);
   await _supabase.from('customers').update({ last_visit: new Date().toISOString() }).eq('id', customerId);
-  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount }, 'Kunjungan berhasil difinalisasi');
+  var restockItems = (details || []).filter(function(d) { return (d.stock_brought || 0) > 0; }).map(function(d) { return { product_id: d.product_id, qty: d.stock_brought || 0 }; });
+  var restockResult = [];
+  if (restockItems.length > 0) {
+    var totalQty = restockItems.reduce(function(s, i) { return s + i.qty; }, 0);
+    var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({ customer_id: visit.customer_id, sales_id: visit.sales_id, type: 'RESTOCK', status: 'SHIPPED', total_items: restockItems.length, total_qty: totalQty, notes: 'Stok dibawa dari kunjungan ' + visit.id }).select().single();
+    if (!shpErr && shp) {
+      for (var ri of restockItems) {
+        await _supabase.from('shipment_details').insert({ shipment_id: shp.id, product_id: ri.product_id, qty: ri.qty });
+        var { data: prod } = await _supabase.from('products').select('name').eq('id', ri.product_id).single();
+        restockResult.push({ product_id: ri.product_id, name: prod?.name || '', qty: ri.qty });
+      }
+    }
+  }
+  // Mark approved stock request as COMPLETED
+  if (visit.sales_id) {
+    var { data: activeReq } = await _supabase.from('stock_requests').select('id').eq('customer_id', visit.customer_id)
+      .eq('sales_id', visit.sales_id).eq('status', 'APPROVED').limit(1).maybeSingle();
+    if (activeReq) { await _supabase.from('stock_requests').update({ status: 'COMPLETED' }).eq('id', activeReq.id); }
+  }
+  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount, restock: restockResult }, 'Kunjungan berhasil difinalisasi');
 };
 
 bridge._actions['cancelKunjungan'] = async (params) => {
@@ -945,11 +985,13 @@ bridge._actions['uploadFotoToko'] = bridge._actions['uploadFotoKunjungan'] = asy
   const d = params.data || params;
   var kunjunganId = d.kunjunganId, tipe = d.tipe || 'sebelum', dataUrl = d.dataUrl;
   if (!kunjunganId || !dataUrl) return fail('Parameter kurang');
-  var { data: visit } = await _supabase.from('visits').select('photos').eq('id', kunjunganId).single();
+  var { data: visit, error: selectErr } = await _supabase.from('visits').select('photos').eq('id', kunjunganId).single();
+  if (selectErr) return fail('Gagal membaca data kunjungan: ' + selectErr.message);
   var arr = []; try { arr = JSON.parse(visit?.photos || '[]'); } catch(e) { arr = []; } if (!Array.isArray(arr)) arr = [];
   var entry = { url: dataUrl }; if (d.latitude && d.longitude) { entry.lat = d.latitude; entry.lng = d.longitude; }
   if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); } else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
-  await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('id', kunjunganId);
+  var { error: updateErr } = await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('id', kunjunganId);
+  if (updateErr) return fail('Gagal menyimpan foto: ' + updateErr.message);
   return ok(null, 'Foto berhasil diupload');
 };
 
@@ -997,17 +1039,31 @@ bridge._actions['getStokKonsinyasiById'] = async (params) => {
 
 bridge._actions['checkCustomerStock'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   if (!d.customer_id) return ok(false);
+  // Verify customer belongs to this Sales
+  if (profile.role === 'SALES' && profile.sales_id) {
+    var { data: cust } = await _supabase.from('customers').select('id').eq('id', d.customer_id).eq('sales_id', profile.sales_id).maybeSingle();
+    if (!cust) return ok({ hasStock: false, totalRemaining: 0 });
+  }
   const { count } = await _supabase.from('consignment_stock')
     .select('id', { count: 'exact', head: true })
     .eq('customer_id', d.customer_id);
-  return ok({ hasStock: (count || 0) > 0 });
+  const { data: stocks } = await _supabase.from('consignment_stock')
+    .select('qty_remaining')
+    .eq('customer_id', d.customer_id);
+  var totalRemaining = (stocks || []).reduce(function(s, r) { return s + (r.qty_remaining || 0); }, 0);
+  var hasRecords = (count || 0) > 0;
+  return ok({ hasStock: hasRecords, totalRemaining: totalRemaining });
 };
 
 bridge._actions['getStokKonsinyasi'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
-  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
+  else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (d?.customer_id) query = query.eq('customer_id', d.customer_id);
   const { data } = await query;
   const mapped = (data || []).map(s => mapFields(s, consignmentMap));
   return ok(mapped);
@@ -1718,11 +1774,52 @@ bridge._actions['backfillInvoiceNumbers'] = async () => {
       var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
       if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
       else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
-      await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+      try { await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id); } catch(e) {
+        try { await _supabase.from('invoices').update({ notes: '##INV:' + invNum + '##' }).eq('id', inv.id); } catch(e2) { continue; }
+      }
       updated++;
     } catch(e) { /* skip problematic row */ }
   }
   return ok(null, updated + ' invoice di-backfill');
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MIGRATION ACTIONS
+// ═══════════════════════════════════════════════════════════════════
+
+bridge._actions['checkMigrationStatus'] = async () => {
+  var result = {};
+  try {
+    await _supabase.from('invoices').select('invoice_number').limit(0);
+    result.invoice_number_column = true;
+  } catch(e) {
+    result.invoice_number_column = false;
+  }
+  return ok(result);
+};
+
+bridge._actions['runMigration'] = async (params) => {
+  var d = params?.data || params;
+  var migration = d.migration || 'invoice_number';
+  if (migration === 'invoice_number') {
+    try {
+      await _supabase.from('invoices').select('invoice_number').limit(0);
+      return ok({ done: true, message: 'Kolom invoice_number sudah ada' });
+    } catch(e) {
+      var sql = 'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT';
+      if (_supabaseAdmin) {
+        for (var paramName of ['sql_text', 'sql', 'query', 'sql_query']) {
+          try {
+            var payload = {};
+            payload[paramName] = sql;
+            await _supabaseAdmin.rpc('exec_sql', payload);
+            return ok({ done: true, message: 'Kolom invoice_number berhasil ditambahkan' });
+          } catch(e) { /* try next param name */ }
+        }
+      }
+      return ok({ done: false, sql: sql });
+    }
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2321,6 +2418,120 @@ bridge._actions['fulfillTitipRequest'] = async (params) => {
     .eq('tipe', 'REQUEST_TITIP_AWAL').eq('is_read', false)
     .filter('pesan', 'like', `%${customerId}%`);
   return ok(null, 'Permintaan titip terpenuhi');
+};
+
+// ── Stock Request (Ambil Stok) ────────────────────────────────────
+bridge._actions['createStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  const profile = await getCurrentProfile();
+  const { sales_id, full_name } = profile;
+  var customerId = d.customer_id, items = d.items || [];
+  if (!customerId) return fail('Customer ID diperlukan');
+  if (!items.length) return fail('Tidak ada item');
+  // Check existing PENDING/APPROVED request for same customer+sales
+  var { data: existing } = await _supabase.from('stock_requests').select('id').eq('customer_id', customerId)
+    .eq('sales_id', sales_id).in('status', ['PENDING','APPROVED']).limit(1).maybeSingle();
+  if (existing) return fail('Sudah ada request stok untuk toko ini yang masih PENDING atau APPROVED');
+
+  var { data: req, error: reqErr } = await _supabase.from('stock_requests').insert({
+    customer_id: customerId, sales_id: sales_id, status: 'PENDING'
+  }).select().single();
+  if (reqErr) return fail(reqErr.message);
+  for (var it of items) {
+    var { error: itErr } = await _supabase.from('stock_request_items').insert({
+      request_id: req.id, product_id: it.produk_id, qty_requested: it.qty
+    });
+    if (itErr) return fail(itErr.message);
+  }
+  // Notify owners
+  var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).single();
+  var pesan = `📦 ${full_name || 'Sales'} minta ambil stok untuk ${cust?.store_name || customerId}`;
+  var { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+  if (owners) {
+    for (var ow of owners) {
+      await _supabase.from('notifications').insert({
+        user_id: ow.id, tipe: 'REQUEST_STOCK', judul: '📦 Request Ambil Stok',
+        pesan, link: '?page=stock-request', is_read: false, created_at: new Date()
+      });
+    }
+  }
+  return ok({ request_id: req.id }, '✅ Permintaan ambil stok sudah dikirim ke Owner');
+};
+
+bridge._actions['getCustomerStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  const profile = await getCurrentProfile();
+  var customerId = d.customer_id;
+  var salesId = d.sales_id || profile.sales_id;
+  // For OWNER/ADMIN, look up customer's sales_id
+  if (!salesId && (profile.role === 'OWNER' || profile.role === 'ADMIN')) {
+    var { data: cust } = await _supabase.from('customers').select('sales_id').eq('id', customerId).single();
+    if (cust) salesId = cust.sales_id;
+  }
+  var { data: requests } = await _supabase.from('stock_requests').select('*, stock_request_items(*)')
+    .eq('customer_id', customerId).eq('sales_id', salesId).order('created_at', { ascending: false }).limit(1);
+  if (!requests || !requests.length) return ok(null);
+  var req = requests[0];
+  var items = (req.stock_request_items || []).map(function(it) {
+    return { produk_id: it.product_id, qty_requested: it.qty_requested, qty_approved: it.qty_approved };
+  });
+  return ok({ id: req.id, status: req.status, items: items });
+};
+
+bridge._actions['getPendingStockRequests'] = async () => {
+  var { data: requests } = await _supabase.from('stock_requests').select('*, stock_request_items(*)')
+    .eq('status', 'PENDING').order('created_at', { ascending: false });
+  if (!requests) return ok([]);
+  // Enrich with customer and sales info
+  var result = [];
+  for (var req of requests) {
+    var { data: cust } = await _supabase.from('customers').select('store_name, owner_name, address').eq('id', req.customer_id).single();
+    var { data: sales } = await _supabase.from('sales').select('full_name').eq('id', req.sales_id).single();
+    var items = [];
+    for (var it of (req.stock_request_items || [])) {
+      var { data: prod } = await _supabase.from('products').select('name').eq('id', it.product_id).single();
+      items.push({ produk_id: it.product_id, nama_produk: prod?.name || '', qty_requested: it.qty_requested, qty_approved: it.qty_approved });
+    }
+    result.push({
+      id: req.id, customer_id: req.customer_id, sales_id: req.sales_id,
+      store_name: cust?.store_name || '', owner_name: cust?.owner_name || '',
+      sales_name: sales?.full_name || '', items: items,
+      created_at: req.created_at, status: req.status
+    });
+  }
+  return ok(result);
+};
+
+bridge._actions['approveStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  var requestId = d.request_id;
+  if (!requestId) return fail('Request ID diperlukan');
+  // Approve with same qty as requested
+  var { data: items } = await _supabase.from('stock_request_items').select('*').eq('request_id', requestId);
+  for (var it of items || []) {
+    await _supabase.from('stock_request_items').update({ qty_approved: it.qty_requested }).eq('id', it.id);
+  }
+  var { error: upErr } = await _supabase.from('stock_requests').update({
+    status: 'APPROVED', approved_at: new Date().toISOString()
+  }).eq('id', requestId);
+  if (upErr) return fail(upErr.message);
+  return ok(null, '✅ Request stok disetujui');
+};
+
+bridge._actions['rejectStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  var requestId = d.request_id;
+  if (!requestId) return fail('Request ID diperlukan');
+  await _supabase.from('stock_requests').update({ status: 'REJECTED' }).eq('id', requestId);
+  return ok(null, '✅ Request stok ditolak');
+};
+
+bridge._actions['completeStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  var requestId = d.request_id;
+  if (!requestId) return fail('Request ID diperlukan');
+  await _supabase.from('stock_requests').update({ status: 'COMPLETED' }).eq('id', requestId);
+  return ok();
 };
 
 // ═══════════════════════════════════════════════════════════════════

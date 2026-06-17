@@ -1249,20 +1249,21 @@ bridge._actions['hardDeleteSales'] = async (params) => {
 
 bridge._actions['getAllKunjungan'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   let query = _supabase.from('visits').select('*, customers(*), sales(*)');
+  if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
+  else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
   if (d?.status) query = query.eq('status', d.status);
-  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
   const { data } = await query.order('created_at', { ascending: false });
   return ok(data);
 };
 
 bridge._actions['getRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
-  const { data } = await _supabase
-    .from('visits')
-    .select('*, sales(full_name)')
-    .eq('customer_id', d.customer_id)
-    .order('created_at', { ascending: false });
+  const profile = await getCurrentProfile();
+  var q = _supabase.from('visits').select('*, sales(full_name)').eq('customer_id', d.customer_id);
+  if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
+  const { data } = await q.order('created_at', { ascending: false });
   return ok(data);
 };
 
@@ -1278,10 +1279,12 @@ bridge._actions['getRiwayatSales'] = async (params) => {
 
 bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   var q = _supabase.from('visits').select('*, customers(*), sales(*)');
-  if (d && d.salesId) q = q.eq('sales_id', d.salesId);
+  if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
+  else if (d && d.salesId) q = q.eq('sales_id', d.salesId);
   const { data } = await q.order('created_at', { ascending: false });
-  return ok((data || []).map(function(v){ return mapFields(v, visitMap); }));
+  return ok((data || []).map(function(v){ return mapFields(v, visitMap)); });
 };
 
 bridge._actions['getDraftKunjungan'] = async () => {
@@ -1300,17 +1303,27 @@ bridge._actions['startKunjungan'] = async (params) => {
   const { data: customer } = await _supabase.from('customers').select('*, sales(full_name)').eq('id', d.customerId).single();
   if (!customer) return fail('Customer tidak ditemukan');
   if (profile.role === 'SALES' && customer.sales_id !== profile.sales_id) return fail('Akses ditolak: bukan customer Anda');
+  const salesId = customer.sales_id;
   const { data: visit, error } = await _supabase.from('visits').insert({
-    customer_id: customer.id, sales_id: customer.sales_id,
+    customer_id: customer.id, sales_id: salesId,
     visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toTimeString().substring(0, 8),
     status: 'DRAFT', latitude: d.latitude || '', longitude: d.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
-  const { data: stokAll } = await _supabase.from('consignment_stock')      .select('*').eq('customer_id', customer.id);
+  const { data: stokAll } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customer.id);
   const { data: allProduk } = await _supabase.from('products').select('*').eq('is_active', true);
+  // Fetch approved stock request to pre-fill stok_dibawa
+  var stockBringMap = {};
+  var { data: approvedReq } = await _supabase.from('stock_requests').select('*, stock_request_items(*)')
+    .eq('customer_id', customer.id).eq('sales_id', salesId).eq('status', 'APPROVED').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (approvedReq && approvedReq.stock_request_items) {
+    for (var sri of approvedReq.stock_request_items) {
+      stockBringMap[sri.product_id] = sri.qty_approved || sri.qty_requested || 0;
+    }
+  }
   var produk = (allProduk || []).map(function(p) {
     var sk = (stokAll || []).filter(function(s) { return s.product_id === p.id; })[0] || {};
-    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_remaining || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.price || 0, hpp: p.hpp || 0 };
+    return { produk_id: p.id, nama_produk: p.name, stok_awal: sk.qty_remaining || 0, target_display: sk.target_display || p.target_display || 20, harga_jual: p.price || 0, hpp: p.hpp || 0, stok_dibawa: stockBringMap[p.id] || 0 };
   });
   return ok({ kunjungan_id: visit.id, customer: { customer_id: customer.id, store_name: customer.store_name, owner_name: customer.owner_name, address: customer.address, kota: customer.city }, produk: produk, last_visit: customer.last_visit });
 };
@@ -1329,7 +1342,7 @@ bridge._actions['saveSisaStok'] = async (params) => {
     var { error } = await _supabase.from('visit_details').insert({
       visit_id: d.kunjunganId, product_id: item.produk_id, initial_stock: item.stok_awal, remaining: item.sisa_fisik,
       damaged: item.rusak || 0, returned: item.retur || 0, sold: terjual, target_display: item.target_display,
-      restock_recommendation: restock, price: item.harga_jual, subtotal: subtotal,
+      restock_recommendation: restock, price: item.harga_jual, subtotal: subtotal, stock_brought: item.stok_dibawa || 0,
     });
     if (error) return fail(error.message);
     totalTerjual += terjual; totalRetur += (item.retur || 0); totalInvoice += subtotal;
@@ -1347,7 +1360,7 @@ bridge._actions['resumeKunjungan'] = async (params) => {
   var customer = visit.customers ? { customer_id: visit.customers.id, store_name: visit.customers.store_name, owner_name: visit.customers.owner_name, address: visit.customers.address, kota: visit.customers.city } : {};
   var produk = (details || []).map(function(d) {
     var pr = (allProduk || []).filter(function(p) { return p.id === d.product_id; })[0] || {};
-    return { produk_id: d.product_id, nama_produk: pr.name || d.product_id, stok_awal: d.initial_stock, sisa_fisik: d.remaining, rusak: d.damaged, retur: d.returned, terjual: d.sold, target_display: d.target_display, rekomendasi_restock: d.restock_recommendation, harga_jual: d.price };
+    return { produk_id: d.product_id, nama_produk: pr.name || d.product_id, stok_awal: d.initial_stock, sisa_fisik: d.remaining, rusak: d.damaged, retur: d.returned, terjual: d.sold, target_display: d.target_display, rekomendasi_restock: d.restock_recommendation, harga_jual: d.price, stok_dibawa: d.stock_brought || 0 };
   });
   return ok({ kunjungan_id: visit.id, customer: customer, produk: produk, last_visit: visit.visit_date });
 };
@@ -1363,16 +1376,22 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   var paymentAmount = parseInt(d.paymentAmount) || 0;
   var paymentMethod = d.paymentMethod || 'TUNAI';
   for (var vd of details || []) {
+    var stockBrought = vd.stock_brought || 0;
     if (vd.sold > 0 || vd.damaged > 0 || vd.returned > 0) {
+      var newRemaining = vd.remaining + stockBrought;
       var { data: existing } = await _supabase.from('consignment_stock').select('*').eq('customer_id', customerId).eq('product_id', vd.product_id).single();
-      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (vd.sold || 0), qty_returned: (existing.qty_returned || 0) + (vd.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (vd.damaged || 0), qty_remaining: vd.remaining }).eq('id', existing.id); }
-      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: vd.product_id, sales_id: salesId, qty_consigned: 0, qty_sold: vd.sold, qty_returned: vd.returned, qty_damaged: vd.damaged, qty_remaining: vd.remaining, target_display: vd.target_display }); }
+      if (existing) { await _supabase.from('consignment_stock').update({ qty_sold: (existing.qty_sold || 0) + (vd.sold || 0), qty_returned: (existing.qty_returned || 0) + (vd.returned || 0), qty_damaged: (existing.qty_damaged || 0) + (vd.damaged || 0), qty_consigned: (existing.qty_consigned || 0) + stockBrought, qty_remaining: newRemaining }).eq('id', existing.id); }
+      else { await _supabase.from('consignment_stock').insert({ customer_id: customerId, product_id: vd.product_id, sales_id: salesId, qty_consigned: stockBrought, qty_sold: vd.sold, qty_returned: vd.returned, qty_damaged: vd.damaged, qty_remaining: newRemaining, target_display: vd.target_display }); }
     }
     if (vd.returned > 0) {
       await _supabase.from('returns').insert({ visit_id: visit.id, customer_id: customerId, sales_id: salesId, product_id: vd.product_id, qty: vd.returned, reason: 'TIDAK_LAKU', condition: 'MASUK_GUDANG' });
       var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', vd.product_id).single();
       if (gudang) { await _supabase.from('warehouse_stock').update({ qty_in: (gudang.qty_in || 0) + (vd.returned || 0), qty_remaining: (gudang.qty_remaining || 0) + (vd.returned || 0) }).eq('id', gudang.id); }
       else { await _supabase.from('warehouse_stock').insert({ product_id: vd.product_id, qty_in: vd.returned, qty_out: 0, qty_remaining: vd.returned, unit: 'PCS' }); }
+    }
+    if (stockBrought > 0) {
+      var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', vd.product_id).single();
+      if (gudang) { await _supabase.from('warehouse_stock').update({ qty_out: (gudang.qty_out || 0) + stockBrought, qty_remaining: Math.max(0, (gudang.qty_remaining || 0) - stockBrought) }).eq('id', gudang.id); }
     }
   }
   var invoiceId = null, paymentId = null;
@@ -1394,7 +1413,10 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
         var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
         if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
         else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
-        await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+        try { await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id); } catch(e) {
+          // Column doesn't exist — fallback to notes field
+          try { await _supabase.from('invoices').update({ notes: '##INV:' + invNum + '##' }).eq('id', inv.id); } catch(e2) {}
+        }
         inv.invoice_number = invNum;
       } catch(e) { /* non-critical, continue */ }
       invoiceId = inv.id;
@@ -1421,7 +1443,26 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
   }
   await _supabase.from('visits').update({ status: 'COMPLETED', end_time: new Date().toTimeString().substring(0, 8) }).eq('id', visit.id);
   await _supabase.from('customers').update({ last_visit: new Date().toISOString() }).eq('id', customerId);
-  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount }, 'Kunjungan berhasil difinalisasi');
+  var restockItems = (details || []).filter(function(d) { return (d.stock_brought || 0) > 0; }).map(function(d) { return { product_id: d.product_id, qty: d.stock_brought || 0 }; });
+  var restockResult = [];
+  if (restockItems.length > 0) {
+    var totalQty = restockItems.reduce(function(s, i) { return s + i.qty; }, 0);
+    var { data: shp, error: shpErr } = await _supabase.from('shipments').insert({ customer_id: visit.customer_id, sales_id: visit.sales_id, type: 'RESTOCK', status: 'SHIPPED', total_items: restockItems.length, total_qty: totalQty, notes: 'Stok dibawa dari kunjungan ' + visit.id }).select().single();
+    if (!shpErr && shp) {
+      for (var ri of restockItems) {
+        await _supabase.from('shipment_details').insert({ shipment_id: shp.id, product_id: ri.product_id, qty: ri.qty });
+        var { data: prod } = await _supabase.from('products').select('name').eq('id', ri.product_id).single();
+        restockResult.push({ product_id: ri.product_id, name: prod?.name || '', qty: ri.qty });
+      }
+    }
+  }
+  // Mark approved stock request as COMPLETED
+  if (visit.sales_id) {
+    var { data: activeReq } = await _supabase.from('stock_requests').select('id').eq('customer_id', visit.customer_id)
+      .eq('sales_id', visit.sales_id).eq('status', 'APPROVED').limit(1).maybeSingle();
+    if (activeReq) { await _supabase.from('stock_requests').update({ status: 'COMPLETED' }).eq('id', activeReq.id); }
+  }
+  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount, restock: restockResult }, 'Kunjungan berhasil difinalisasi');
 };
 
 bridge._actions['cancelKunjungan'] = async (params) => {
@@ -1465,11 +1506,13 @@ bridge._actions['uploadFotoToko'] = bridge._actions['uploadFotoKunjungan'] = asy
   const d = params.data || params;
   var kunjunganId = d.kunjunganId, tipe = d.tipe || 'sebelum', dataUrl = d.dataUrl;
   if (!kunjunganId || !dataUrl) return fail('Parameter kurang');
-  var { data: visit } = await _supabase.from('visits').select('photos').eq('id', kunjunganId).single();
+  var { data: visit, error: selectErr } = await _supabase.from('visits').select('photos').eq('id', kunjunganId).single();
+  if (selectErr) return fail('Gagal membaca data kunjungan: ' + selectErr.message);
   var arr = []; try { arr = JSON.parse(visit?.photos || '[]'); } catch(e) { arr = []; } if (!Array.isArray(arr)) arr = [];
   var entry = { url: dataUrl }; if (d.latitude && d.longitude) { entry.lat = d.latitude; entry.lng = d.longitude; }
   if (tipe === 'sesudah') { arr[1] = entry; if (arr.length < 2) arr.push(entry); } else { arr[0] = entry; if (arr.length < 1) arr.push(entry); }
-  await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('id', kunjunganId);
+  var { error: updateErr } = await _supabase.from('visits').update({ photos: JSON.stringify(arr) }).eq('id', kunjunganId);
+  if (updateErr) return fail('Gagal menyimpan foto: ' + updateErr.message);
   return ok(null, 'Foto berhasil diupload');
 };
 
@@ -1517,17 +1560,31 @@ bridge._actions['getStokKonsinyasiById'] = async (params) => {
 
 bridge._actions['checkCustomerStock'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   if (!d.customer_id) return ok(false);
+  // Verify customer belongs to this Sales
+  if (profile.role === 'SALES' && profile.sales_id) {
+    var { data: cust } = await _supabase.from('customers').select('id').eq('id', d.customer_id).eq('sales_id', profile.sales_id).maybeSingle();
+    if (!cust) return ok({ hasStock: false, totalRemaining: 0 });
+  }
   const { count } = await _supabase.from('consignment_stock')
     .select('id', { count: 'exact', head: true })
     .eq('customer_id', d.customer_id);
-  return ok({ hasStock: (count || 0) > 0 });
+  const { data: stocks } = await _supabase.from('consignment_stock')
+    .select('qty_remaining')
+    .eq('customer_id', d.customer_id);
+  var totalRemaining = (stocks || []).reduce(function(s, r) { return s + (r.qty_remaining || 0); }, 0);
+  var hasRecords = (count || 0) > 0;
+  return ok({ hasStock: hasRecords, totalRemaining: totalRemaining });
 };
 
 bridge._actions['getStokKonsinyasi'] = async (params) => {
   const d = params?.data || params;
+  const profile = await getCurrentProfile();
   let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
-  if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
+  else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
+  if (d?.customer_id) query = query.eq('customer_id', d.customer_id);
   const { data } = await query;
   const mapped = (data || []).map(s => mapFields(s, consignmentMap));
   return ok(mapped);
@@ -2238,11 +2295,52 @@ bridge._actions['backfillInvoiceNumbers'] = async () => {
       var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
       if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
       else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
-      await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id);
+      try { await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id); } catch(e) {
+        try { await _supabase.from('invoices').update({ notes: '##INV:' + invNum + '##' }).eq('id', inv.id); } catch(e2) { continue; }
+      }
       updated++;
     } catch(e) { /* skip problematic row */ }
   }
   return ok(null, updated + ' invoice di-backfill');
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MIGRATION ACTIONS
+// ═══════════════════════════════════════════════════════════════════
+
+bridge._actions['checkMigrationStatus'] = async () => {
+  var result = {};
+  try {
+    await _supabase.from('invoices').select('invoice_number').limit(0);
+    result.invoice_number_column = true;
+  } catch(e) {
+    result.invoice_number_column = false;
+  }
+  return ok(result);
+};
+
+bridge._actions['runMigration'] = async (params) => {
+  var d = params?.data || params;
+  var migration = d.migration || 'invoice_number';
+  if (migration === 'invoice_number') {
+    try {
+      await _supabase.from('invoices').select('invoice_number').limit(0);
+      return ok({ done: true, message: 'Kolom invoice_number sudah ada' });
+    } catch(e) {
+      var sql = 'ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT';
+      if (_supabaseAdmin) {
+        for (var paramName of ['sql_text', 'sql', 'query', 'sql_query']) {
+          try {
+            var payload = {};
+            payload[paramName] = sql;
+            await _supabaseAdmin.rpc('exec_sql', payload);
+            return ok({ done: true, message: 'Kolom invoice_number berhasil ditambahkan' });
+          } catch(e) { /* try next param name */ }
+        }
+      }
+      return ok({ done: false, sql: sql });
+    }
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2843,6 +2941,109 @@ bridge._actions['fulfillTitipRequest'] = async (params) => {
   return ok(null, 'Permintaan titip terpenuhi');
 };
 
+// ── Stock Request (Ambil Stok) ────────────────────────────────────
+bridge._actions['createStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  const profile = await getCurrentProfile();
+  const { sales_id, full_name } = profile;
+  var customerId = d.customer_id, items = d.items || [];
+  if (!customerId) return fail('Customer ID diperlukan');
+  if (!items.length) return fail('Tidak ada item');
+  var { data: existing } = await _supabase.from('stock_requests').select('id').eq('customer_id', customerId)
+    .eq('sales_id', sales_id).in('status', ['PENDING','APPROVED']).limit(1).maybeSingle();
+  if (existing) return fail('Sudah ada request stok untuk toko ini yang masih PENDING atau APPROVED');
+  var { data: req, error: reqErr } = await _supabase.from('stock_requests').insert({
+    customer_id: customerId, sales_id: sales_id, status: 'PENDING'
+  }).select().single();
+  if (reqErr) return fail(reqErr.message);
+  for (var it of items) {
+    var { error: itErr } = await _supabase.from('stock_request_items').insert({
+      request_id: req.id, product_id: it.produk_id, qty_requested: it.qty
+    });
+    if (itErr) return fail(itErr.message);
+  }
+  var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).single();
+  var pesan = `📦 ${full_name || 'Sales'} minta ambil stok untuk ${cust?.store_name || customerId}`;
+  var { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+  if (owners) {
+    for (var ow of owners) {
+      await _supabase.from('notifications').insert({
+        user_id: ow.id, tipe: 'REQUEST_STOCK', judul: '📦 Request Ambil Stok',
+        pesan, link: '?page=stock-request', is_read: false, created_at: new Date()
+      });
+    }
+  }
+  return ok({ request_id: req.id }, '✅ Permintaan ambil stok sudah dikirim ke Owner');
+};
+bridge._actions['getCustomerStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  const profile = await getCurrentProfile();
+  var customerId = d.customer_id;
+  var salesId = d.sales_id || profile.sales_id;
+  if (!salesId && (profile.role === 'OWNER' || profile.role === 'ADMIN')) {
+    var { data: cust } = await _supabase.from('customers').select('sales_id').eq('id', customerId).single();
+    if (cust) salesId = cust.sales_id;
+  }
+  var { data: requests } = await _supabase.from('stock_requests').select('*, stock_request_items(*)')
+    .eq('customer_id', customerId).eq('sales_id', salesId).order('created_at', { ascending: false }).limit(1);
+  if (!requests || !requests.length) return ok(null);
+  var req = requests[0];
+  var items = (req.stock_request_items || []).map(function(it) {
+    return { produk_id: it.product_id, qty_requested: it.qty_requested, qty_approved: it.qty_approved || it.qty_requested };
+  });
+  return ok({ id: req.id, status: req.status, items: items });
+};
+bridge._actions['getPendingStockRequests'] = async () => {
+  var { data: requests } = await _supabase.from('stock_requests').select('*, stock_request_items(*)')
+    .eq('status', 'PENDING').order('created_at', { ascending: false });
+  if (!requests) return ok([]);
+  var result = [];
+  for (var req of requests) {
+    var { data: cust } = await _supabase.from('customers').select('store_name, owner_name, address').eq('id', req.customer_id).single();
+    var { data: sales } = await _supabase.from('sales').select('full_name').eq('id', req.sales_id).single();
+    var items = [];
+    for (var it of (req.stock_request_items || [])) {
+      var { data: prod } = await _supabase.from('products').select('name').eq('id', it.product_id).single();
+      items.push({ produk_id: it.product_id, nama_produk: prod?.name || '', qty_requested: it.qty_requested, qty_approved: it.qty_approved || it.qty_requested });
+    }
+    result.push({
+      id: req.id, customer_id: req.customer_id, sales_id: req.sales_id,
+      store_name: cust?.store_name || '', owner_name: cust?.owner_name || '',
+      sales_name: sales?.full_name || '', items: items,
+      created_at: req.created_at, status: req.status
+    });
+  }
+  return ok(result);
+};
+bridge._actions['approveStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  var requestId = d.request_id;
+  if (!requestId) return fail('Request ID diperlukan');
+  var { data: items } = await _supabase.from('stock_request_items').select('*').eq('request_id', requestId);
+  for (var it of items || []) {
+    await _supabase.from('stock_request_items').update({ qty_approved: it.qty_requested }).eq('id', it.id);
+  }
+  var { error: upErr } = await _supabase.from('stock_requests').update({
+    status: 'APPROVED', approved_at: new Date().toISOString()
+  }).eq('id', requestId);
+  if (upErr) return fail(upErr.message);
+  return ok(null, '✅ Request stok disetujui');
+};
+bridge._actions['rejectStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  var requestId = d.request_id;
+  if (!requestId) return fail('Request ID diperlukan');
+  await _supabase.from('stock_requests').update({ status: 'REJECTED' }).eq('id', requestId);
+  return ok(null, '✅ Request stok ditolak');
+};
+bridge._actions['completeStockRequest'] = async (params) => {
+  const d = params?.data || params;
+  var requestId = d.request_id;
+  if (!requestId) return fail('Request ID diperlukan');
+  await _supabase.from('stock_requests').update({ status: 'COMPLETED' }).eq('id', requestId);
+  return ok();
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // GAS COMPATIBILITY LAYER — google.script.run polyfill
 // ═══════════════════════════════════════════════════════════════════
@@ -3337,6 +3538,8 @@ function enterApp(user){
   buildTabs(user.role);
   loadPage('dashboard');
   loadNotifCount();
+  // Poll notification badge every 15s
+  if (!window._notifPollTimer) window._notifPollTimer = setInterval(loadNotifCount, 15000);
   // Preload semua page di background agar kunjungan pertama cepat
   preloadAllPages(user.role);
 }
@@ -3363,6 +3566,7 @@ function buildTabs(role){
     tabs.push({id:'customer-groups',label:'Grup Customer',icon:'👪'});
     tabs.push({id:'sales-list',label:'Sales',icon:'👤'});
     tabs.push({id:'kunjungan',label:'Kunjungan',icon:'🚗'});
+    tabs.push({id:'stock-request',label:'Approval Stok',icon:'📋'});
     tabs.push({id:'invoice',label:'Invoice',icon:'💰'});
     tabs.push({id:'piutang',label:'Piutang',icon:'💳'});
     tabs.push({id:'stok-produksi',label:'Stok',icon:'🏭'});
@@ -3566,8 +3770,9 @@ function afterPageLoad(id){
    else if(id==='produk')initProduk();
    else if(id==='kategori')initKategori();
    else if(id==='customer')initCustomer();
-  else if(id==='kunjungan')initKunjungan('OWNER');
-  else if(id==='setup-data')initSetupData();
+   else if(id==='kunjungan')initKunjungan('OWNER');
+   else if(id==='stock-request')showStockRequestsPage();
+   else if(id==='setup-data')initSetupData();
    else if(id==='invoice')initInvoice();
    else if(id==='piutang')initPiutang();
    else if(id==='produksi')initProduksiPage();
@@ -4604,7 +4809,22 @@ function showKunjBuat(){
   document.getElementById('kunjBuatBtn').className='btn btn-primary';
   document.getElementById('kunjRiwayatBtn').className='btn btn-outline';
   var conte=document.getElementById('kunjunganContent');
-  conte.innerHTML='<div style="display:flex;gap:8px;margin-bottom:16px"><span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span></div><div id="kunjStepContent"></div>';
+  conte.innerHTML='';
+  var existingBar=document.getElementById('kunjStepBar');
+  if(!existingBar){
+    var bar=document.createElement('div');
+    bar.id='kunjStepBar';
+    bar.style.cssText='display:flex;gap:8px;margin-bottom:16px';
+    bar.innerHTML='<span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span>';
+    conte.before(bar);
+  }else{
+    existingBar.style.display='flex';
+    document.getElementById('step1').className='btn btn-sm btn-primary';
+    document.getElementById('step2').className='btn btn-sm btn-outline';
+    document.getElementById('step2').style.opacity='.5';
+    document.getElementById('step3').className='btn btn-sm btn-outline';
+    document.getElementById('step3').style.opacity='.5';
+  }
   kunjunganState={};
   showKunjunganStep1();
 }
@@ -4612,6 +4832,8 @@ function showKunjBuat(){
 function showKunjRiwayat(){
   document.getElementById('kunjBuatBtn').className='btn btn-outline';
   document.getElementById('kunjRiwayatBtn').className='btn btn-primary';
+  var bar=document.getElementById('kunjStepBar');
+  if(bar)bar.style.display='none';
   var conte=document.getElementById('kunjunganContent');
   conte.innerHTML='<div class="loading">Memuat riwayat...</div>';
   loadSalesDropdown('', '', function() {
@@ -4698,10 +4920,7 @@ function cekStokTitipan(){
   btn.disabled=true;
   api('checkCustomerStock',{customer_id:custId},function(r){
     if(!r.success||!r.data){msgEl.innerHTML='';btn.disabled=false;return}
-    if(r.data.hasStock){
-      msgEl.innerHTML='<span style="color:var(--success);font-size:13px">✅ Toko sudah punya stok titipan, bisa kunjungan</span>';
-      btn.disabled=false;
-    } else {
+    if(!r.data.hasStock){
       msgEl.innerHTML='<span style="color:#FF6F00;font-size:13px">⏳ Mengirim permintaan titip awal ke Owner...</span>';
       btn.disabled=true;
       api('requestTitipAwal',{customer_id:custId},function(r2){
@@ -4712,8 +4931,95 @@ function cekStokTitipan(){
             '<button class="btn btn-sm btn-warning" onclick="mintaTitipAwal()" style="margin-top:4px">📨 Minta Titip Awal ke Owner</button>';
         }
       });
+      return;
     }
+    // Customer has stock — check stock request status
+    api('getCustomerStockRequest',{customer_id:custId},function(r2){
+      if(!r2.success||!r2.data){
+        // No request yet — show ambil stok form
+        showAmbilStokForm(custId);
+        return;
+      }
+      var req=r2.data;
+      if(req.status==='APPROVED'){
+        msgEl.innerHTML='<span style="color:var(--success);font-size:13px">✅ Stok dibawa sudah disetujui Owner. Mulai kunjungan!</span>';
+        btn.disabled=false;
+        btn.textContent='▶️ Mulai Kunjungan';
+      } else if(req.status==='PENDING'){
+        msgEl.innerHTML='<span style="color:#FF6F00;font-size:13px">⏳ Menunggu Owner menyetujui stok yang dibawa...</span>';
+        btn.disabled=true;
+        btn.textContent='⏳ Menunggu Approval';
+      } else if(req.status==='REJECTED'){
+        msgEl.innerHTML='<span style="color:#C62828;font-size:13px">❌ Request stok ditolak Owner. Ajukan ulang.</span> '+
+          '<button class="btn btn-sm btn-warning" onclick="showAmbilStokForm(\''+custId+'\')" style="margin-top:4px">📋 Ajukan Ulang</button>';
+        btn.disabled=true;
+      } else if(req.status==='COMPLETED'){
+        msgEl.innerHTML='<span style="color:var(--success);font-size:13px">✅ Stok dibawa sebelumnya sudah selesai. Buat request baru?</span> '+
+          '<button class="btn btn-sm btn-primary" onclick="showAmbilStokForm(\''+custId+'\')" style="margin-top:4px">📋 Ambil Stok Baru</button>';
+        btn.disabled=true;
+        btn.textContent='▶️ Mulai Kunjungan';
+      }
+    });
   });
+}
+function showAmbilStokForm(custId){
+  var msgEl=document.getElementById('stockCheckMsg');
+  var btn=document.getElementById('btnMulaiKunjungan');
+  btn.disabled=true;
+  msgEl.innerHTML='<span style="color:var(--text-light);font-size:13px">⏳ Memuat produk...</span>';
+  api('getStokKonsinyasi',{customer_id:custId},function(r){
+    var produk=r.data||[];
+    var html='<div style="background:#FFF8E1;border-radius:8px;padding:12px;margin:8px 0;font-size:13px">📝 Catat stok yang akan <strong>dibawa dari gudang</strong> untuk kunjungan ini</div>';
+    var total=0; (produk||[]).forEach(function(p){total+=(p.qty_sisa||0)});
+    if(total===0){
+      msgEl.innerHTML='<div style="background:#FFEBEE;padding:12px;border-radius:8px;margin:8px 0;font-size:13px">⚠️ Belum ada stok titipan di toko ini. Minta Owner titip awal dulu.</div>'+
+        '<button class="btn btn-sm btn-warning" onclick="mintaTitipAwal()" style="margin-top:4px">📨 Minta Titip Awal ke Owner</button>';
+      btn.disabled=true; return;
+    }
+    html+='<div class="table-wrap"><table><thead><tr><th>Produk</th><th>Stok di Toko</th><th>Stok Dibawa</th></tr></thead><tbody>';
+    (produk||[]).forEach(function(p){
+      var pid=p.produk_id||'';
+      var pname=(p.products&&p.products.name)||'';
+      var sk=p.qty_sisa||0;
+      html+='<tr><td><strong>'+pname+'</strong></td><td>'+sk+' pcs</td><td><input type="number" id="req_'+pid+'" value="0" min="0" style="width:80px;padding:8px;border:1px solid #4CAF50;border-radius:6px;font-size:14px;min-height:40px"></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    html+='<div style="margin-top:8px;display:flex;gap:8px">';
+    html+='<button class="btn btn-primary" onclick="submitStockRequest(\''+custId+'\')">📨 Kirim ke Owner</button>';
+    html+='<button class="btn btn-outline" onclick="showKunjunganStep1()">← Batal</button></div>';
+    msgEl.innerHTML=html;
+  });
+}
+function submitStockRequest(custId){
+  var msgEl=document.getElementById('stockCheckMsg');
+  var btn=document.getElementById('btnMulaiKunjungan');
+  var items=[];
+  // Collect all input values from the form
+  var inputs=msgEl.querySelectorAll('input[id^="req_"]');
+  inputs.forEach(function(inp){
+    var pid=inp.id.replace('req_','');
+    var qty=parseInt(inp.value)||0;
+    if(qty>0) items.push({produk_id:pid, qty:qty});
+  });
+  if(!items.length){toast('⚠️ Isi minimal 1 produk');return}
+  btn.disabled=true;
+  msgEl.innerHTML='<span style="color:var(--text-light);font-size:13px">⏳ Mengirim request ke Owner...</span>';
+  api('createStockRequest',{customer_id:custId,items:items},function(r){
+    if(!r.success){msgEl.innerHTML='<span style="color:#C62828;font-size:13px">❌ '+(r.message||'Gagal')+'</span>';btn.disabled=false;return}
+    toast('✅ Request stok dikirim ke Owner');
+    showStockRequestPending(custId);
+  });
+}
+function showStockRequestPending(custId){
+  var msgEl=document.getElementById('stockCheckMsg');
+  var btn=document.getElementById('btnMulaiKunjungan');
+  btn.disabled=true;
+  btn.textContent='⏳ Menunggu Approval';
+  msgEl.innerHTML='<div style="background:#FFF8E1;border-radius:8px;padding:16px;text-align:center;margin:8px 0">'+
+    '<div style="font-size:32px">📋</div>'+
+    '<div style="font-weight:600;margin:8px 0">Request stok sudah dikirim ke Owner</div>'+
+    '<div style="font-size:13px;color:var(--text-light);margin-bottom:12px">Tunggu Owner menyetujui, lalu lanjutkan kunjungan.</div>'+
+    '<button class="btn btn-sm btn-outline" onclick="cekStokTitipan()">🔄 Cek Status</button></div>';
 }
 function mintaTitipAwal(){
   var custId=document.getElementById('kunjCustomer').value;
@@ -4791,13 +5097,14 @@ function showKunjunganStep2(){
     el.innerHTML='<div class="card"><p>Tidak ada produk aktif. Tambah produk dulu.</p></div>';
     return;
   }
-  var html='<div class="card"><h4>Catat Sisa Stok Display</h4><p style="font-size:13px;color:var(--text-light);margin-bottom:12px">Masukkan jumlah sisa stok fisik yang ada di display customer.</p>';
-  html+='<div class="table-wrap"><table><thead><tr><th>Produk</th><th>Target</th><th>Sisa Fisik</th><th>Rusak</th><th>Retur</th></tr></thead><tbody>';
+  var html='<div class="card"><h4>Catat Sisa Stok Display</h4><p style="font-size:13px;color:var(--text-light);margin-bottom:12px">Isi stok yang dibawa dari gudang dan sisa fisik di display customer.</p>';
+  html+='<div class="table-wrap"><table><thead><tr><th>Produk</th><th>Target</th><th>Stok Dibawa</th><th>Sisa Fisik</th><th>Rusak</th><th>Retur</th></tr></thead><tbody>';
   produk.forEach(function(p){
     var pid=p.produk_id;
     html+='<tr>';
     html+='<td><strong>'+(p.nama_produk||'')+'</strong></td>';
     html+='<td>'+(p.target_display||0)+'</td>';
+    html+='<td><input type="number" id="sb_'+pid+'" value="0" min="0" style="width:80px;padding:10px;border:1px solid #4CAF50;border-radius:6px;font-size:14px;min-height:44px"></td>';
     html+='<td><input type="number" id="sf_'+pid+'" value="'+(p.stok_awal||0)+'" min="0" style="width:80px;padding:10px;border:1px solid #E0E0E0;border-radius:6px;font-size:14px;min-height:44px"></td>';
     html+='<td><input type="number" id="rs_'+pid+'" value="0" min="0" style="width:80px;padding:10px;border:1px solid #E0E0E0;border-radius:6px;font-size:14px;min-height:44px"></td>';
     html+='<td><input type="number" id="rt_'+pid+'" value="0" min="0" style="width:80px;padding:10px;border:1px solid #E0E0E0;border-radius:6px;font-size:14px;min-height:44px"></td>';
@@ -5005,12 +5312,14 @@ function simpanSisaStok(){
   var items=[];
   kunjunganState.produk.forEach(function(p){
     var pid=p.produk_id;
+    var dibawa=parseInt(document.getElementById('sb_'+pid).value)||0;
     var sisa=parseInt(document.getElementById('sf_'+pid).value)||0;
     var rusak=parseInt(document.getElementById('rs_'+pid).value)||0;
     var retur=parseInt(document.getElementById('rt_'+pid).value)||0;
     items.push({
       produk_id:pid,
       stok_awal:p.stok_awal||0,
+      stok_dibawa:dibawa,
       sisa_fisik:sisa,
       rusak:rusak,
       retur:retur,
@@ -5030,12 +5339,13 @@ function simpanSisaStok(){
       p.sisa_fisik = it.sisa_fisik;
       p.rusak = it.rusak;
       p.retur = it.retur;
+      p.stok_dibawa = it.stok_dibawa;
       p.terjual = Math.max(0, (it.stok_awal||0) - it.sisa_fisik - (it.rusak||0) - (it.retur||0));
     });
-    document.getElementById('step2').classList.remove('btn-outline');
-    document.getElementById('step2').classList.add('btn-success');
-    document.getElementById('step2').style.opacity='1';
-    document.getElementById('step3').style.opacity='1';
+    var el2=document.getElementById('step2');
+    if(el2){el2.classList.remove('btn-outline');el2.classList.add('btn-success');el2.style.opacity='1'}
+    var el3=document.getElementById('step3');
+    if(el3)el3.style.opacity='1';
     showKunjunganStep3();
   },45000);
 }
@@ -5049,11 +5359,11 @@ function showKunjunganStep3(){
   if (produk.length>0) {
     var totalTerjual=0, totalRetur=0, totalRusak=0, totalTagihan=0;
     html+='<div class="card" style="margin-top:12px"><h4>Ringkasan Stok</h4>';
-    html+='<div style="overflow-x:auto;margin:12px 0"><table><thead><tr><th>Produk</th><th>Stok Awal</th><th>Sisa Fisik</th><th>Rusak</th><th>Retur</th><th>Terjual</th><th>Subtotal</th></tr></thead><tbody>';
+    html+='<div style="overflow-x:auto;margin:12px 0"><table><thead><tr><th>Produk</th><th>Stok Awal</th><th>Stok Dibawa</th><th>Sisa Fisik</th><th>Rusak</th><th>Retur</th><th>Terjual</th><th>Subtotal</th></tr></thead><tbody>';
     produk.forEach(function(p){
       var terjual=p.terjual||0; totalTerjual+=terjual; totalRetur+=p.retur||0; totalRusak+=p.rusak||0;
       var sub=terjual*(p.harga_jual||0); totalTagihan+=sub;
-      html+='<tr><td>'+(p.nama_produk||'')+'</td><td>'+(p.stok_awal||0)+'</td><td>'+(p.sisa_fisik||0)+'</td><td>'+(p.rusak||0)+'</td><td>'+(p.retur||0)+'</td><td><strong>'+terjual+'</strong></td><td>Rp '+fmt(sub)+'</td></tr>';
+      html+='<tr><td>'+(p.nama_produk||'')+'</td><td>'+(p.stok_awal||0)+'</td><td>'+(p.stok_dibawa||0)+'</td><td>'+(p.sisa_fisik||0)+'</td><td>'+(p.rusak||0)+'</td><td>'+(p.retur||0)+'</td><td><strong>'+terjual+'</strong></td><td>Rp '+fmt(sub)+'</td></tr>';
     });
     html+='</tbody></table></div>';
     html+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0;font-size:13px;text-align:center">';
@@ -5105,10 +5415,16 @@ function finalisasiKunjungan(){
   el.innerHTML='<div class="loading">Memfinalisasi...</div>';
   api('finalizeKunjungan',{kunjunganId:kunjunganState.kunjunganId,paymentAmount:bayar,paymentMethod:metode},function(r){
     if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
-    document.getElementById('step3').classList.remove('btn-outline');
-    document.getElementById('step3').classList.add('btn-success');
-    document.getElementById('step3').style.opacity='1';
+    var s3=document.getElementById('step3');
+    if(s3){s3.classList.remove('btn-outline');s3.classList.add('btn-success');s3.style.opacity='1'}
     var html='<div class="card" style="text-align:center;padding:40px"><div style="font-size:48px">✅</div><h3 style="color:var(--success);margin:16px 0">Kunjungan Selesai!</h3><p>'+(r.message||'Invoice telah dibuat.')+'</p>';
+    var restok = r.data.restock;
+    if(restok&&restok.length>0){
+      html+='<div style="background:#E8F5E9;border-radius:8px;padding:12px;margin:12px 0;text-align:left">';
+      html+='<div style="font-weight:600;margin-bottom:8px">📦 Stok dibawa dari gudang:</div>';
+      restok.forEach(function(ri){ html+='<div style="font-size:13px;padding:2px 0">• '+(ri.name||'')+': <strong>'+ri.qty+' pcs</strong></div>'; });
+      html+='</div>';
+    }
     html+='<button class="btn btn-primary" style="margin-top:16px" onclick="initKunjungan(\''+(CURRENT_USER.role||'OWNER')+'\')">Kunjungan Baru</button></div>';
     el.innerHTML=html;
     toast('Kunjungan berhasil difinalisasi!');
@@ -5121,6 +5437,76 @@ function prosesRestock(){
     toast('✅ Restock berhasil!');
     var btn=document.querySelector('button[onclick*="prosesRestock"]');
     if(btn){btn.textContent='✅ Restock Selesai';btn.disabled=true;btn.className='btn btn-sm btn-success'}
+  });
+}
+
+// ====== STOCK REQUEST (APPROVAL OWNER) ======
+function showStockRequestsPage(){
+  var mc=document.getElementById('mainContent');
+  mc.innerHTML='<h3 style="color:var(--primary);margin-bottom:16px">📋 Approval Ambil Stok</h3><div id="stockReqContent"><div class="loading">Memuat...</div></div>';
+  loadStockRequests();
+}
+function loadStockRequests(){
+  var el=document.getElementById('stockReqContent');
+  if(!el)return;
+  el.innerHTML='<div class="loading">Memuat permintaan...</div>';
+  api('getPendingStockRequests',{},function(r){
+    if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
+    var data=r.data||[];
+    if(!data.length){
+      el.innerHTML='<div class="card" style="text-align:center;padding:40px"><div style="font-size:48px">✅</div><h4 style="margin:12px 0">Tidak ada permintaan pending</h4><p style="color:var(--text-light)">Semua request stok sudah diproses.</p></div>';
+      return;
+    }
+    var html='';
+    data.forEach(function(req){
+      html+='<div class="card" style="margin-bottom:12px;border-left:4px solid #FF6F00">';
+      html+='<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">';
+      html+='<div><strong>🏪 '+(req.store_name||'')+'</strong><br><span style="font-size:13px;color:var(--text-light)">👤 '+(req.sales_name||'')+'</span></div>';
+      html+='<div style="font-size:12px;color:var(--text-light)">'+(req.created_at||'').substring(0,10)+'</div></div>';
+      html+='<div class="table-wrap" style="margin:8px 0"><table><thead><tr><th>Produk</th><th>Qty</th></tr></thead><tbody>';
+      (req.items||[]).forEach(function(it){
+        var pname=it.nama_produk||it.produk_id||'';
+        html+='<tr><td>'+pname+'</td><td>'+it.qty_requested+' pcs</td></tr>';
+      });
+      html+='</tbody></table></div>';
+      html+='<div style="display:flex;gap:8px">';
+      html+='<button class="btn btn-sm btn-success" onclick="approveStockReq(\''+req.id+'\')">✅ Setujui</button>';
+      html+='<button class="btn btn-sm btn-danger" onclick="rejectStockReq(\''+req.id+'\')">❌ Tolak</button></div>';
+      html+='</div>';
+    });
+    el.innerHTML=html;
+  });
+}
+function approveStockReq(requestId){
+  var el=document.getElementById('stockReqContent');
+  api('approveStockRequest',{request_id:requestId},function(r){
+    if(!r.success){toast('❌ '+(r.message||'Gagal'));return}
+    toast('✅ Request stok disetujui! Sales bisa mulai kunjungan.');
+    loadStockRequests();
+    loadNotifCount();
+    // Mark related notifications as read
+    api('getNotifikasi',{userId:CURRENT_USER.user_id},function(nr){
+      if(!nr.success||!nr.data)return;
+      (nr.data||[]).forEach(function(n){
+        if(n.tipe==='REQUEST_STOCK'&&!n.is_read) api('markNotifRead',{notifId:n.notifikasi_id});
+      });
+    });
+  });
+}
+function rejectStockReq(requestId){
+  var el=document.getElementById('stockReqContent');
+  api('rejectStockRequest',{request_id:requestId},function(r){
+    if(!r.success){toast('❌ '+(r.message||'Gagal'));return}
+    toast('✅ Request stok ditolak.');
+    loadStockRequests();
+    loadNotifCount();
+    // Mark related notifications as read
+    api('getNotifikasi',{userId:CURRENT_USER.user_id},function(nr){
+      if(!nr.success||!nr.data)return;
+      (nr.data||[]).forEach(function(n){
+        if(n.tipe==='REQUEST_STOCK'&&!n.is_read) api('markNotifRead',{notifId:n.notifikasi_id});
+      });
+    });
   });
 }
 
@@ -5143,9 +5529,11 @@ function initSetupData(){
     html+='<div class="card"><h4>Pengaturan</h4><div id="settingsArea"><div class="loading">Memuat...</div></div></div>';
     html+='<div class="card"><h4>Manajemen User</h4><div id="userManagementArea"><div class="loading">Memuat...</div></div></div>';
   }
+  html+='<div class="card"><h4>Database Migration</h4><div id="migrationStatus"><div class="loading">Memeriksa...</div></div></div>';
   html+='</div>';
   mc.innerHTML=html;
   checkSystemStatus();
+  checkMigrationStatus();
   if(isOwner){ loadSettings(); loadUsers(); }
 }
 
@@ -5491,10 +5879,10 @@ function backfillInvoiceNumbers(){
 }
 
 function seedData(){
-  var btn=document.getElementById('btnSeed');
-  btn.disabled=true;btn.textContent='Memproses...';
+  var btn=document.getElementById('seedBtn2')||document.getElementById('btnSeed');
+  if(btn){btn.disabled=true;btn.textContent='Memproses...';}
   api('seedAll',{},function(r){
-    btn.disabled=false;btn.textContent='🌱 Seed Sample Data';
+    if(btn){btn.disabled=false;btn.textContent='🌱 Seed Sample Data';}
     var el=document.getElementById('seedResult');
     if(r.success){
       el.innerHTML='<div style="color:var(--success);font-weight:600">✅ Seed berhasil!</div><pre style="font-size:12px;margin-top:8px;background:#F5F5F5;padding:12px;border-radius:8px;overflow-x:auto">'+(r.message||'')+'</pre>';
@@ -5516,6 +5904,67 @@ function checkSystemStatus(){
     items.forEach(function(i){html+='<tr><td>'+i.l+'</td><td>'+i.v+'</td></tr>'});
     html+='</tbody></table></div>';
     el.innerHTML=html;
+  });
+}
+
+// ====== DATABASE MIGRATION ======
+
+function checkMigrationStatus(){
+  var el=document.getElementById('migrationStatus');
+  if(!el)return;
+  api('checkMigrationStatus',{},function(r){
+    if(!r.success){el.innerHTML='<p style="color:var(--error)">Gagal memeriksa</p>';return}
+    var s=r.data||{};
+    var html='<div class="table-wrap"><table><thead><tr><th>Item</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
+    html+='<tr><td>invoice_number column</td><td>'+(s.invoice_number_column?'✅':'❌')+'</td><td>';
+    if(!s.invoice_number_column) html+='<button class="btn btn-sm btn-primary" onclick="runMigration(\'invoice_number\')">Jalankan</button>';
+    else html+='<span style="color:var(--success);font-size:13px">OK</span>';
+    html+='</td></tr></tbody></table></div>';
+    el.innerHTML=html;
+  });
+}
+
+function runMigration(name){
+  api('runMigration',{migration:name},function(r){
+    if(r.success){
+      if(r.data && r.data.done){
+        toast('✅ '+r.data.message);
+      } else if(r.data && r.data.sql){
+        showMigrationSql(r.data.sql);
+      }
+    } else {
+      toast('Error: '+r.message);
+    }
+    checkMigrationStatus();
+  });
+}
+
+function showMigrationSql(sql){
+  var overlay=document.getElementById('modalOverlay');
+  var content=document.getElementById('modalContent');
+  overlay.style.display='flex';
+  content.innerHTML=
+    '<div style="min-width:500px;max-width:700px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+    '<h3 style="margin:0">⚠️ Migration Manual Diperlukan</h3>'+
+    '<button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button></div>'+
+    '<p style="margin-bottom:12px;color:var(--text-light)">Kolom database belum ada. Jalankan SQL berikut di Supabase Dashboard &gt; SQL Editor:</p>'+
+    '<pre style="background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;user-select:all">'+
+    sql+'</pre>'+
+    '<div style="margin-top:16px;display:flex;gap:8px">'+
+    '<button class="btn btn-primary" onclick="copySql()">📋 Copy SQL</button>'+
+    '<button class="btn btn-outline" onclick="closeModal()">Tutup</button></div>'+
+    '<div id="copyMsg" style="margin-top:8px;font-size:12px;color:var(--success)"></div></div>';
+}
+
+function copySql(){
+  var pre=document.querySelector('#modalContent pre');
+  if(!pre)return;
+  var text=pre.textContent;
+  navigator.clipboard.writeText(text).then(function(){
+    document.getElementById('copyMsg').textContent='✅ SQL tercopy!';
+  }).catch(function(){
+    document.getElementById('copyMsg').textContent='Gagal copy, select manual';
   });
 }
 
@@ -6057,7 +6506,12 @@ function loadInvList() {
 }
 
 function invDisplay(inv){
-  return inv.invoice_number || (inv.id||'').substring(0,8);
+  if (inv.invoice_number) return inv.invoice_number;
+  if (inv.notes) {
+    var m = inv.notes.match(/##INV:([^#]+)##/);
+    if (m) return m[1];
+  }
+  return (inv.id||'').substring(0,8);
 }
 function renderInvTable(el, data) {
   if (data.length === 0) {
@@ -6092,7 +6546,7 @@ function showInvoiceDetail(id) {
     var st = (inv.status || '').toUpperCase();
     var totalBayar = payments.reduce(function(s, p) { return s + (p.amount || 0); }, 0);
     html = '<div class="invoice-print-area">';
-    html += '<div style="text-align:center;margin-bottom:16px"><h3 style="margin:0">📄 Detail Invoice</h3><div style="font-size:12px;color:var(--text-light)">' + (inv.invoice_number || id) + '</div></div>';
+    html += '<div style="text-align:center;margin-bottom:16px"><h3 style="margin:0">📄 Detail Invoice</h3><div style="font-size:12px;color:var(--text-light)">' + invDisplay(inv) + '</div></div>';
     html += '<div class="card" style="margin-bottom:12px"><table style="width:100%"><tbody>';
     html += '<tr><td style="padding:4px 8px;font-weight:600;width:120px">Tanggal</td><td>' + tgl + '</td></tr>';
     html += '<tr><td style="padding:4px 8px;font-weight:600">Customer</td><td>' + (cust.store_name || cust.name || inv.customer_id || '-') + '</td></tr>';
@@ -6160,7 +6614,7 @@ function thermalPrintInvoice(){
   if ((inv.thermal_show_address !== 'false' && inv.thermal_show_address !== false)) {
     printContent += '<div style="font-size:10px;color:#666;margin-bottom:4px">Jl. Contoh No. 123, Kota</div>';
   }
-  printContent += '<div style="font-size:12px;margin-bottom:4px">Invoice: ' + (inv.invoice_number || (inv.id||'').substring(0,8)) + '</div>';
+  printContent += '<div style="font-size:12px;margin-bottom:4px">Invoice: ' + invDisplay(inv) + '</div>';
   printContent += '<div style="font-size:11px;color:#666">' + tgl + '</div>';
   printContent += '</div>';
   printContent += '<hr style="border-top:1px dashed #000;margin:8px 0">';
@@ -6225,8 +6679,8 @@ function renderPiutangTable(el, data) {
   data.forEach(function(p) {
     var jt = p.due_date ? p.due_date.substring(0, 10) : '';
     var overdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'PAID';
-    var invNo = (p.invoices && p.invoices.invoice_number) || (p.invoice_id||'').substring(0,8);
-    html += '<tr><td><strong>' + invNo + '</strong></td><td>' + ((p.customers && p.customers.store_name) || p.customer_id || '') + '</td><td>Rp ' + fmt(p.total || 0) + '</td>';
+    var invDisp = p.invoices ? invDisplay(p.invoices) : (p.invoice_id||'').substring(0,8);
+    html += '<tr><td><strong>' + invDisp + '</strong></td><td>' + ((p.customers && p.customers.store_name) || p.customer_id || '') + '</td><td>Rp ' + fmt(p.total || 0) + '</td>';
     html += '<td><strong>Rp ' + fmt(p.remaining || 0) + '</strong></td>';
     html += '<td style="color:' + (overdue ? 'var(--error)' : 'inherit') + '">' + jt + '</td>';
     var st = (p.status || '').toUpperCase();
@@ -6312,8 +6766,8 @@ function loadPiutangAktif(){
       data.forEach(function(p){
         var jt=p.due_date?p.due_date.substring(0,10):'';
         var overdue=p.due_date&&new Date(p.due_date)<new Date()&&p.status!=='PAID';
-        var invNo=(p.invoices&&p.invoices.invoice_number)||(p.invoice_id||'').substring(0,8);
-        html+='<tr><td><strong>'+invNo+'</strong></td><td>'+((p.customers&&p.customers.store_name)||p.customer_id||'')+'</td><td>Rp '+fmt(p.total||0)+'</td>';
+        var invDisp=p.invoices?invDisplay(p.invoices):(p.invoice_id||'').substring(0,8);
+        html+='<tr><td><strong>'+invDisp+'</strong></td><td>'+((p.customers&&p.customers.store_name)||p.customer_id||'')+'</td><td>Rp '+fmt(p.total||0)+'</td>';
         html+='<td><strong>Rp '+fmt(p.remaining||0)+'</strong></td><td style="color:'+(overdue?'var(--error)':'inherit')+'">'+jt+'</td>';
         var st=(p.status||'').toUpperCase();
         html+='<td><span class="badge-'+(st==='PAID'?'success':st==='PARTIAL'?'warning':'danger')+'">'+st+'</span></td>';
@@ -7671,7 +8125,7 @@ function lihatFoto(kunjunganId) {
     if (!r.success || !r.data) return;
     var d = r.data;
     var arr = [];
-    try { arr = JSON.parse(d.foto_toko || '[]'); } catch(e) { arr = d.foto_toko ? [{url: d.foto_toko}] : []; }
+    try { arr = JSON.parse(d.photos || '[]'); } catch(e) { arr = d.photos ? [{url: d.photos}] : []; }
     if (!Array.isArray(arr)) arr = [{url: arr}];
     if (arr.length === 0) return;
     var html = '<div id="fotoLightbox" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px" onclick="this.remove()">'+
