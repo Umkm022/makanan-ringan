@@ -881,6 +881,26 @@ bridge._actions['createCustomer'] = async (params) => {
     longitude: d.longitude || null,
   }).select().single();
   if (error) return fail(error.message);
+
+  // Kirim notifikasi ke Owner jika customer dibuat oleh Sales
+  try {
+    const profile = await getCurrentProfile();
+    if (profile.role === 'SALES') {
+      const { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+      if (owners && owners.length > 0) {
+        const pesan = `Sales ${profile.full_name || profile.username} mendaftarkan toko baru: ${d.store_name}`;
+        for (const owner of owners) {
+          await _supabase.from('notifications').insert({
+            user_id: owner.id, tipe: 'CUSTOMER_BARU',
+            judul: '🏪 Toko Baru', pesan,
+            link: '?page=customer',
+            is_read: false, created_at: new Date(),
+          });
+        }
+      }
+    }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Owner:', e.message); }
+
   return ok(data, 'Customer berhasil dibuat');
 };
 
