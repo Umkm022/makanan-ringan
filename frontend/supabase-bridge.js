@@ -222,9 +222,14 @@ async function _handleAuthLogin(username, password) {
     .from('users')
     .select('*')
     .eq('username', username)
-    .single();
+    .maybeSingle();
 
-  if (lookupErr || !users) return { success: false, message: 'User not found', data: null };
+  if (lookupErr) {
+    console.error('[Auth] Lookup error:', lookupErr);
+    return { success: false, message: 'Gagal memeriksa user: ' + (lookupErr.message || 'Unknown error'), data: null };
+  }
+  if (!users) return { success: false, message: 'User tidak ditemukan', data: null };
+  if (users.is_active === false) return { success: false, message: 'Akun tidak aktif — hubungi Owner', data: null };
 
   // Sign in with Supabase Auth
   const { data, error } = await _supabase.auth.signInWithPassword({
@@ -232,7 +237,13 @@ async function _handleAuthLogin(username, password) {
     password: password,
   });
 
-  if (error) return { success: false, message: 'Invalid password', data: null };
+  if (error) {
+    console.error('[Auth] SignIn error:', error);
+    if (error.message && error.message.includes('Email not confirmed')) {
+      return { success: false, message: 'Email belum dikonfirmasi', data: null };
+    }
+    return { success: false, message: 'Password salah', data: null };
+  }
 
   // Return in old format
   return {
@@ -267,10 +278,20 @@ async function _handleLogout() {
 }
 
 async function _handleCheckSystemReady() {
-  const { count } = await _supabase
-    .from('users')
-    .select('*', { count: 'exact', head: true });
-  return { success: true, data: { ready: count > 0 } };
+  try {
+    const { count, error } = await _supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true });
+    if (error) {
+      console.warn('[Auth] checkSystemReady error:', error.message);
+      // On error (e.g. RLS), assume system is ready so login form stays active
+      return { success: true, data: { ready: true } };
+    }
+    return { success: true, data: { ready: count > 0 } };
+  } catch (e) {
+    console.warn('[Auth] checkSystemReady exception:', e.message);
+    return { success: true, data: { ready: true } };
+  }
 }
 
 async function _handleSetupOwner(params) {
@@ -346,6 +367,11 @@ bridge._actions['getCustomer'] = async (params) => {
 
 bridge._actions['createCustomer'] = async (params) => {
   const d = params.data || params;
+  // Cek duplikat nama toko
+  if (d.store_name) {
+    var { data: existing } = await _supabase.from('customers').select('id').eq('store_name', d.store_name).limit(1).maybeSingle();
+    if (existing) return fail('Toko dengan nama "' + d.store_name + '" sudah terdaftar');
+  }
   const { data, error } = await _supabase.from('customers').insert({
     sales_id: d.sales_id || null,
     store_name: d.store_name,
@@ -465,10 +491,22 @@ bridge._actions['getProduk'] = async () => {
 
 bridge._actions['createProduk'] = async (params) => {
   const d = params.data || params;
+  const nama = d.nama_produk || d.name;
+  const kode = d.kode_produk || d.code;
+  // Cek duplikat nama
+  if (nama) {
+    var { data: existing } = await _supabase.from('products').select('id').eq('name', nama).limit(1).maybeSingle();
+    if (existing) return fail('Produk dengan nama "' + nama + '" sudah ada');
+  }
+  // Cek duplikat kode
+  if (kode) {
+    var { data: existingKode } = await _supabase.from('products').select('id').eq('code', kode).limit(1).maybeSingle();
+    if (existingKode) return fail('Produk dengan kode "' + kode + '" sudah ada');
+  }
   const { data, error } = await _supabase.from('products').insert({
     category_id: d.kategori_id,
-    code: d.kode_produk || d.code,
-    name: d.nama_produk || d.name,
+    code: kode,
+    name: nama,
     variant: d.varian,
     description: d.deskripsi,
     packaging: d.kemasan,
@@ -765,7 +803,7 @@ bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   else if (d && d.salesId) q = q.eq('sales_id', d.salesId);
   const { data } = await q.order('created_at', { ascending: false });
-  return ok((data || []).map(function(v){ return mapFields(v, visitMap)); });
+  return ok((data || []).map(function(v){ return mapFields(v, visitMap); }));
 };
 
 bridge._actions['getDraftKunjungan'] = async () => {
@@ -1945,17 +1983,19 @@ bridge._actions['generateReport'] = async (params) => {
     }
     // ── 8. Pembayaran ───────────────────────────────────────────
     case 'pembayaran': {
-      let q = _supabase.from('payments').select('*, customers(*)');
+      let q = _supabase.from('payments').select('*, customers(*), sales(*)');
       if (d.sales_id) q = q.eq('sales_id', d.sales_id);
       const { data } = await q;
       const result = (data || []).map(function(p) {
         const c = p.customers || {};
+        const s = p.sales || {};
         var st = 'BELUM_DISETOR';
         if (p.status === 'MENUNGGU') st = 'MENUNGGU';
         else if (p.status === 'DIKONFIRMASI') st = 'SUDAH_DISETOR';
         return {
           pembayaran_id: p.id,
           customer_nama: c.store_name || c.name || p.customer_id,
+          sales_nama: s.full_name || s.name || p.sales_id || '',
           jumlah_bayar: p.amount || 0,
           metode_bayar: p.method || '',
           tanggal: p.payment_date || p.created_at || '',
@@ -2492,6 +2532,27 @@ bridge._actions['getCustomerStockRequest'] = async (params) => {
     return { produk_id: it.product_id, qty_requested: it.qty_requested, qty_approved: it.qty_approved };
   });
   return ok({ id: req.id, status: req.status, items: items });
+};
+
+bridge._actions['getSalesStockRequests'] = async () => {
+  const profile = await getCurrentProfile();
+  if (!profile.sales_id) return fail('Sales ID tidak ditemukan');
+  var { data: requests } = await _supabase.from('stock_requests')
+    .select('*, customers(store_name), stock_request_items(*, products(name))')
+    .eq('sales_id', profile.sales_id)
+    .order('created_at', { ascending: false });
+  var result = (requests || []).map(function(req) {
+    var cust = req.customers || {};
+    var items = (req.stock_request_items || []).map(function(it) {
+      var prod = it.products || {};
+      return { produk_id: it.product_id, nama_produk: prod.name || '', qty_requested: it.qty_requested, qty_approved: it.qty_approved };
+    });
+    return {
+      id: req.id, customer_id: req.customer_id, store_name: cust.store_name || '',
+      status: req.status, created_at: req.created_at, items: items
+    };
+  });
+  return ok(result);
 };
 
 bridge._actions['getPendingStockRequests'] = async () => {
