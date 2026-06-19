@@ -1,0 +1,5 @@
+name = "supplier-seblak"
+pages_build_output_dir = "frontend"
+
+[env.production]
+pages_build_output_dir = "frontend"

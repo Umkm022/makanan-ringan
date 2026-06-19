@@ -52,6 +52,7 @@ let _doLoggingOut = false;
 window.doLogout = async function doLogout() {
   if (_doLoggingOut) return;
   _doLoggingOut = true;
+  if (typeof _notifRefreshInterval !== 'undefined' && _notifRefreshInterval) { clearInterval(_notifRefreshInterval); _notifRefreshInterval = null; }
   try {
     await bridge.direct('destroySession');
   } catch {}

@@ -863,6 +863,8 @@ async function _handleValidateSession(token) {
 
 bridge._actions['getCustomers'] = async () => {
   const profile = await getCurrentProfile();
+  // Jika role SALES tapi sales_id null, kembalikan data kosong
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   var q = _supabase.from('customers').select('*, sales(full_name)');
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   const { data } = await q;
@@ -1292,6 +1294,7 @@ bridge._actions['hardDeleteSales'] = async (params) => {
 bridge._actions['getAllKunjungan'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   let query = _supabase.from('visits').select('*, customers(*), sales(*)');
   if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
   else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
@@ -1303,6 +1306,7 @@ bridge._actions['getAllKunjungan'] = async (params) => {
 bridge._actions['getRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   var q = _supabase.from('visits').select('*, sales(full_name)').eq('customer_id', d.customer_id);
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   const { data } = await q.order('created_at', { ascending: false });
@@ -1322,6 +1326,7 @@ bridge._actions['getRiwayatSales'] = async (params) => {
 bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   var q = _supabase.from('visits').select('*, customers(*), sales(*)');
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   else if (d && d.salesId) q = q.eq('sales_id', d.salesId);
@@ -1602,6 +1607,7 @@ bridge._actions['checkCustomerStock'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
   if (!d.customer_id) return ok(false);
+  if (profile.role === 'SALES' && !profile.sales_id) return ok({ hasStock: false, totalRemaining: 0 });
   // Verify customer belongs to this Sales
   if (profile.role === 'SALES' && profile.sales_id) {
     var { data: cust } = await _supabase.from('customers').select('id').eq('id', d.customer_id).eq('sales_id', profile.sales_id).maybeSingle();
@@ -1621,6 +1627,7 @@ bridge._actions['checkCustomerStock'] = async (params) => {
 bridge._actions['getStokKonsinyasi'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
   if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
   else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
@@ -1876,20 +1883,22 @@ bridge._actions['setorPembayaran'] = async (params) => {
     status: 'MENUNGGU',
   }).eq('id', d.pembayaran_id).select('*, customers(store_name)').single();
   if (error) return fail(error.message);
-  const { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
-  if (owners && owners.length > 0) {
-    var namaToko = payment?.customers?.store_name || 'Sales';
-    var jumlah = payment?.amount || 0;
-    for (var o of owners) {
-      await _supabase.from('notifications').insert({
-        user_id: o.id, tipe: 'SETORAN',
-        judul: '💰 Setoran Baru',
-        pesan: 'Setoran dari ' + namaToko + ': Rp ' + jumlah,
-        link: '?page=invoice&view=setor',
-        is_read: false, created_at: new Date(),
-      });
+  try {
+    const { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+    if (owners && owners.length > 0) {
+      var namaToko = payment?.customers?.store_name || 'Sales';
+      var jumlah = payment?.amount || 0;
+      for (var o of owners) {
+        await _supabase.from('notifications').insert({
+          user_id: o.id, tipe: 'SETORAN',
+          judul: '💰 Setoran Baru',
+          pesan: 'Setoran dari ' + namaToko + ': Rp ' + jumlah,
+          link: '?page=invoice&view=setor',
+          is_read: false, created_at: new Date(),
+        });
+      }
     }
-  }
+  } catch(e) { console.log('[Notif] Gagal kirim notif setoran:', e.message); }
   return ok(payment, 'Pembayaran menunggu konfirmasi owner');
 };
 
@@ -1996,22 +2005,24 @@ bridge._actions['cairkanKomisi'] = async (params) => {
   }).in('id', ids).select();
   if (error) return fail(error.message);
   // Kirim notifikasi ke sales
-  var salesIds = [...new Set((data || []).map(function(c){ return c.sales_id; }).filter(Boolean))];
-  if (salesIds.length) {
-    var { data: users } = await _supabase.from('users').select('id').in('sales_id', salesIds);
-    if (users && users.length) {
-      var totalAmount = (data || []).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
-      for (var u of users) {
-        await _supabase.from('notifications').insert({
-          user_id: u.id, tipe: 'KOMISI_CAIR',
-          judul: '💰 Komisi Cair',
-          pesan: 'Komisi Rp ' + (totalAmount || 0).toLocaleString('id-ID') + ' sudah dicairkan',
-          link: '?page=komisi',
-          is_read: false, created_at: new Date(),
-        });
+  try {
+    var salesIds = [...new Set((data || []).map(function(c){ return c.sales_id; }).filter(Boolean))];
+    if (salesIds.length) {
+      var { data: users } = await _supabase.from('users').select('id').in('sales_id', salesIds);
+      if (users && users.length) {
+        var totalAmount = (data || []).reduce(function(s, c){ return s + (c.amount || 0); }, 0);
+        for (var u of users) {
+          await _supabase.from('notifications').insert({
+            user_id: u.id, tipe: 'KOMISI_CAIR',
+            judul: '💰 Komisi Cair',
+            pesan: 'Komisi Rp ' + (totalAmount || 0).toLocaleString('id-ID') + ' sudah dicairkan',
+            link: '?page=komisi',
+            is_read: false, created_at: new Date(),
+          });
+        }
       }
     }
-  }
+  } catch(e) { console.log('[Notif] Gagal kirim notif komisi:', e.message); }
   return ok(data, 'Komisi berhasil dicairkan');
 };
 
@@ -2986,13 +2997,15 @@ bridge._actions['requestTitipAwal'] = async (params) => {
   const pesan = `Sales ${profile.full_name || profile.username} meminta titip awal untuk ${cust.store_name} (${customerId})`;
   const link = `?page=titipan&customer_id=${customerId}`;
 
-  for (const owner of owners) {
-    await _supabase.from('notifications').insert({
-      user_id: owner.id, tipe: 'REQUEST_TITIP_AWAL',
-      judul: '📦 Request Titip Awal', pesan, link,
-      is_read: false, created_at: new Date()
-    });
-  }
+  try {
+    for (const owner of owners) {
+      await _supabase.from('notifications').insert({
+        user_id: owner.id, tipe: 'REQUEST_TITIP_AWAL',
+        judul: '📦 Request Titip Awal', pesan, link,
+        is_read: false, created_at: new Date()
+      });
+    }
+  } catch(e) { console.log('[Notif] Gagal kirim notif titip awal:', e.message); }
   return ok(null, '✅ Permintaan titip awal sudah dikirim ke Owner');
 };
 
@@ -3031,17 +3044,19 @@ bridge._actions['createStockRequest'] = async (params) => {
     if (itErr) return fail(itErr.message);
   }
   // Notify owners
-  var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).single();
-  var pesan = `📦 ${full_name || 'Sales'} minta ambil stok untuk ${cust?.store_name || customerId}`;
-  var { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
-  if (owners) {
-    for (var ow of owners) {
-      await _supabase.from('notifications').insert({
-        user_id: ow.id, tipe: 'REQUEST_STOCK', judul: '📦 Request Ambil Stok',
-        pesan, link: '?page=stock-request', is_read: false, created_at: new Date()
-      });
+  try {
+    var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).single();
+    var pesan = `📦 ${full_name || 'Sales'} minta ambil stok untuk ${cust?.store_name || customerId}`;
+    var { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+    if (owners) {
+      for (var ow of owners) {
+        await _supabase.from('notifications').insert({
+          user_id: ow.id, tipe: 'REQUEST_STOCK', judul: '📦 Request Ambil Stok',
+          pesan, link: '?page=stock-request', is_read: false, created_at: new Date()
+        });
+      }
     }
-  }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Owner:', e.message); }
   return ok({ request_id: req.id }, '✅ Permintaan ambil stok sudah dikirim ke Owner');
 };
 
@@ -3123,6 +3138,23 @@ bridge._actions['approveStockRequest'] = async (params) => {
     status: 'APPROVED', approved_at: new Date().toISOString()
   }).eq('id', requestId);
   if (upErr) return fail(upErr.message);
+  // Notify sales
+  try {
+    var { data: req } = await _supabase.from('stock_requests').select('*, customers(store_name)').eq('id', requestId).single();
+    if (req && req.sales_id) {
+      var { data: salesUser } = await _supabase.from('users').select('id').eq('sales_id', req.sales_id).eq('role', 'SALES').maybeSingle();
+      if (salesUser) {
+        var namaToko = req.customers?.store_name || req.customer_id || '';
+        await _supabase.from('notifications').insert({
+          user_id: salesUser.id, tipe: 'STOCK_APPROVED',
+          judul: '✅ Request Stok Disetujui',
+          pesan: `Request stok untuk ${namaToko} sudah disetujui Owner`,
+          link: '?page=stock-request',
+          is_read: false, created_at: new Date()
+        });
+      }
+    }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Sales:', e.message); }
   return ok(null, '✅ Request stok disetujui');
 };
 
@@ -3131,6 +3163,23 @@ bridge._actions['rejectStockRequest'] = async (params) => {
   var requestId = d.request_id;
   if (!requestId) return fail('Request ID diperlukan');
   await _supabase.from('stock_requests').update({ status: 'REJECTED' }).eq('id', requestId);
+  // Notify sales
+  try {
+    var { data: req } = await _supabase.from('stock_requests').select('*, customers(store_name)').eq('id', requestId).single();
+    if (req && req.sales_id) {
+      var { data: salesUser } = await _supabase.from('users').select('id').eq('sales_id', req.sales_id).eq('role', 'SALES').maybeSingle();
+      if (salesUser) {
+        var namaToko = req.customers?.store_name || req.customer_id || '';
+        await _supabase.from('notifications').insert({
+          user_id: salesUser.id, tipe: 'STOCK_REJECTED',
+          judul: '❌ Request Stok Ditolak',
+          pesan: `Request stok untuk ${namaToko} ditolak oleh Owner`,
+          link: '?page=stock-request',
+          is_read: false, created_at: new Date()
+        });
+      }
+    }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Sales:', e.message); }
   return ok(null, '✅ Request stok ditolak');
 };
 
@@ -3268,6 +3317,7 @@ let _doLoggingOut = false;
 window.doLogout = async function doLogout() {
   if (_doLoggingOut) return;
   _doLoggingOut = true;
+  if (_notifRefreshInterval) { clearInterval(_notifRefreshInterval); _notifRefreshInterval = null; }
   try {
     await bridge.direct('destroySession');
   } catch {}
@@ -3542,6 +3592,7 @@ var CURRENT_PAGE = 'dashboard';
 var _navStack = [];
 var _backExitTimeout = null;
 var _backNav = false;
+var _notifRefreshInterval = null;
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
@@ -3614,6 +3665,9 @@ function enterApp(user){
   buildTabs(user.role);
   loadPage('dashboard');
   loadNotifCount();
+  // Auto-refresh notifikasi setiap 30 detik
+  if (_notifRefreshInterval) clearInterval(_notifRefreshInterval);
+  _notifRefreshInterval = setInterval(loadNotifCount, 30000);
   // Preload semua page di background agar kunjungan pertama cepat
   preloadAllPages(user.role);
 }
@@ -6104,7 +6158,7 @@ function loadPendingStockRequests(){
 
 function approveStockReq(id){
   api('approveStockRequest', {data:{request_id:id}}, function(r){
-    if(r.success){toast('✅ Request disetujui');loadPendingStockRequests();}
+    if(r.success){toast('✅ Request disetujui');loadPendingStockRequests();loadNotifCount();}
     else{toast('❌ '+(r.message||'Gagal'));}
   });
 }
@@ -6113,7 +6167,7 @@ function rejectStockReq(id){
   confirmModal('Yakin tolak request ini?').then(function(ok){
     if(!ok)return;
     api('rejectStockRequest', {data:{request_id:id}}, function(r){
-      if(r.success){toast('✅ Request ditolak');loadPendingStockRequests();}
+      if(r.success){toast('✅ Request ditolak');loadPendingStockRequests();loadNotifCount();}
       else{toast('❌ '+(r.message||'Gagal'));}
     });
   });

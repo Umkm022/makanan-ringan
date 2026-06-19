@@ -345,6 +345,8 @@ async function _handleValidateSession(token) {
 
 bridge._actions['getCustomers'] = async () => {
   const profile = await getCurrentProfile();
+  // Jika role SALES tapi sales_id null, kembalikan data kosong
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   var q = _supabase.from('customers').select('*, sales(full_name)');
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   const { data } = await q;
@@ -774,6 +776,7 @@ bridge._actions['hardDeleteSales'] = async (params) => {
 bridge._actions['getAllKunjungan'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   let query = _supabase.from('visits').select('*, customers(*), sales(*)');
   if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
   else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
@@ -785,6 +788,7 @@ bridge._actions['getAllKunjungan'] = async (params) => {
 bridge._actions['getRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   var q = _supabase.from('visits').select('*, sales(full_name)').eq('customer_id', d.customer_id);
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   const { data } = await q.order('created_at', { ascending: false });
@@ -804,11 +808,12 @@ bridge._actions['getRiwayatSales'] = async (params) => {
 bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   var q = _supabase.from('visits').select('*, customers(*), sales(*)');
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   else if (d && d.salesId) q = q.eq('sales_id', d.salesId);
   const { data } = await q.order('created_at', { ascending: false });
-  return ok((data || []).map(function(v){ return mapFields(v, visitMap); }));
+  return ok((data || []).map(function(v){ return mapFields(v, visitMap)); });
 };
 
 bridge._actions['getDraftKunjungan'] = async () => {
@@ -1084,6 +1089,7 @@ bridge._actions['checkCustomerStock'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
   if (!d.customer_id) return ok(false);
+  if (profile.role === 'SALES' && !profile.sales_id) return ok({ hasStock: false, totalRemaining: 0 });
   // Verify customer belongs to this Sales
   if (profile.role === 'SALES' && profile.sales_id) {
     var { data: cust } = await _supabase.from('customers').select('id').eq('id', d.customer_id).eq('sales_id', profile.sales_id).maybeSingle();
@@ -1103,6 +1109,7 @@ bridge._actions['checkCustomerStock'] = async (params) => {
 bridge._actions['getStokKonsinyasi'] = async (params) => {
   const d = params?.data || params;
   const profile = await getCurrentProfile();
+  if (profile.role === 'SALES' && !profile.sales_id) return ok([]);
   let query = _supabase.from('consignment_stock').select('*, customers(*), sales(*), products(*)');
   if (profile.role === 'SALES' && profile.sales_id) query = query.eq('sales_id', profile.sales_id);
   else if (d?.sales_id) query = query.eq('sales_id', d.sales_id);
@@ -2513,17 +2520,19 @@ bridge._actions['createStockRequest'] = async (params) => {
     if (itErr) return fail(itErr.message);
   }
   // Notify owners
-  var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).single();
-  var pesan = `📦 ${full_name || 'Sales'} minta ambil stok untuk ${cust?.store_name || customerId}`;
-  var { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
-  if (owners) {
-    for (var ow of owners) {
-      await _supabase.from('notifications').insert({
-        user_id: ow.id, tipe: 'REQUEST_STOCK', judul: '📦 Request Ambil Stok',
-        pesan, link: '?page=stock-request', is_read: false, created_at: new Date()
-      });
+  try {
+    var { data: cust } = await _supabase.from('customers').select('store_name').eq('id', customerId).single();
+    var pesan = `📦 ${full_name || 'Sales'} minta ambil stok untuk ${cust?.store_name || customerId}`;
+    var { data: owners } = await _supabase.from('users').select('id').eq('role', 'OWNER');
+    if (owners) {
+      for (var ow of owners) {
+        await _supabase.from('notifications').insert({
+          user_id: ow.id, tipe: 'REQUEST_STOCK', judul: '📦 Request Ambil Stok',
+          pesan, link: '?page=stock-request', is_read: false, created_at: new Date()
+        });
+      }
     }
-  }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Owner:', e.message); }
   return ok({ request_id: req.id }, '✅ Permintaan ambil stok sudah dikirim ke Owner');
 };
 
@@ -2605,6 +2614,23 @@ bridge._actions['approveStockRequest'] = async (params) => {
     status: 'APPROVED', approved_at: new Date().toISOString()
   }).eq('id', requestId);
   if (upErr) return fail(upErr.message);
+  // Notify sales
+  try {
+    var { data: req } = await _supabase.from('stock_requests').select('*, customers(store_name)').eq('id', requestId).single();
+    if (req && req.sales_id) {
+      var { data: salesUser } = await _supabase.from('users').select('id').eq('sales_id', req.sales_id).eq('role', 'SALES').maybeSingle();
+      if (salesUser) {
+        var namaToko = req.customers?.store_name || req.customer_id || '';
+        await _supabase.from('notifications').insert({
+          user_id: salesUser.id, tipe: 'STOCK_APPROVED',
+          judul: '✅ Request Stok Disetujui',
+          pesan: `Request stok untuk ${namaToko} sudah disetujui Owner`,
+          link: '?page=stock-request',
+          is_read: false, created_at: new Date()
+        });
+      }
+    }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Sales:', e.message); }
   return ok(null, '✅ Request stok disetujui');
 };
 
@@ -2613,6 +2639,23 @@ bridge._actions['rejectStockRequest'] = async (params) => {
   var requestId = d.request_id;
   if (!requestId) return fail('Request ID diperlukan');
   await _supabase.from('stock_requests').update({ status: 'REJECTED' }).eq('id', requestId);
+  // Notify sales
+  try {
+    var { data: req } = await _supabase.from('stock_requests').select('*, customers(store_name)').eq('id', requestId).single();
+    if (req && req.sales_id) {
+      var { data: salesUser } = await _supabase.from('users').select('id').eq('sales_id', req.sales_id).eq('role', 'SALES').maybeSingle();
+      if (salesUser) {
+        var namaToko = req.customers?.store_name || req.customer_id || '';
+        await _supabase.from('notifications').insert({
+          user_id: salesUser.id, tipe: 'STOCK_REJECTED',
+          judul: '❌ Request Stok Ditolak',
+          pesan: `Request stok untuk ${namaToko} ditolak oleh Owner`,
+          link: '?page=stock-request',
+          is_read: false, created_at: new Date()
+        });
+      }
+    }
+  } catch(e) { console.log('[Notif] Gagal kirim notif Sales:', e.message); }
   return ok(null, '✅ Request stok ditolak');
 };
 

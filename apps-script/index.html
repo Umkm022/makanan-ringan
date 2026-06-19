@@ -685,6 +685,7 @@ var CURRENT_PAGE = 'dashboard';
 var _navStack = [];
 var _backExitTimeout = null;
 var _backNav = false;
+var _notifRefreshInterval = null;
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
@@ -757,6 +758,9 @@ function enterApp(user){
   buildTabs(user.role);
   loadPage('dashboard');
   loadNotifCount();
+  // Auto-refresh notifikasi setiap 30 detik
+  if (window._notifRefreshInterval) clearInterval(window._notifRefreshInterval);
+  window._notifRefreshInterval = setInterval(loadNotifCount, 30000);
   // Preload semua page di background agar kunjungan pertama cepat
   preloadAllPages(user.role);
 }
@@ -3247,7 +3251,7 @@ function loadPendingStockRequests(){
 
 function approveStockReq(id){
   api('approveStockRequest', {data:{request_id:id}}, function(r){
-    if(r.success){toast('✅ Request disetujui');loadPendingStockRequests();}
+    if(r.success){toast('✅ Request disetujui');loadPendingStockRequests();loadNotifCount();}
     else{toast('❌ '+(r.message||'Gagal'));}
   });
 }
@@ -3256,7 +3260,7 @@ function rejectStockReq(id){
   confirmModal('Yakin tolak request ini?').then(function(ok){
     if(!ok)return;
     api('rejectStockRequest', {data:{request_id:id}}, function(r){
-      if(r.success){toast('✅ Request ditolak');loadPendingStockRequests();}
+      if(r.success){toast('✅ Request ditolak');loadPendingStockRequests();loadNotifCount();}
       else{toast('❌ '+(r.message||'Gagal'));}
     });
   });
