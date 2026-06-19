@@ -1537,6 +1537,20 @@ bridge._actions['deleteBiaya'] = async (params) => {
 // PRODUCTION ACTIONS
 // ═══════════════════════════════════════════════════════════════════
 
+bridge._actions['getNextBatchNumber'] = async () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const dateStr = y + m + day;
+  const startOfDay = new Date(y, now.getMonth(), now.getDate()).toISOString();
+  const { count } = await _supabase.from('productions')
+    .select('*', { count: 'exact', head: true })
+    .gte('created_at', startOfDay);
+  const seq = (count || 0) + 1;
+  return ok('BATCH-' + dateStr + '-' + String(seq).padStart(3, '0'));
+};
+
 bridge._actions['getProduksi'] = async () => {
   const { data } = await _supabase.from('productions').select('*, products(*), users(full_name)');
   const mapped = (data || []).map(p => mapFields(p, productionMap));
@@ -1548,9 +1562,22 @@ bridge._actions['createProduksi'] = async (params) => {
   const d = params.data || params;
   const qty = parseFloat(d.qty_produksi) || 0;
   const hpp = parseFloat(d.hpp_per_unit) || 0;
+  if (!d.batch_number) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const dateStr = y + m + day;
+    const startOfDay = new Date(y, now.getMonth(), now.getDate()).toISOString();
+    const { count } = await _supabase.from('productions')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', startOfDay);
+    const seq = (count || 0) + 1;
+    d.batch_number = 'BATCH-' + dateStr + '-' + String(seq).padStart(3, '0');
+  }
   const { data, error } = await _supabase.from('productions').insert({
     product_id: d.produk_id,
-    batch_number: d.batch_number || '',
+    batch_number: d.batch_number,
     qty: qty,
     hpp_per_unit: hpp,
     total_hpp: d.total_hpp || (qty * hpp),

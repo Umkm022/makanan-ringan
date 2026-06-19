@@ -2941,6 +2941,11 @@ function showProduksiForm(){
     html+='<div id="produksiResult" style="margin-top:12px"></div></div>';
     el.innerHTML=html;
     loadProdukDropdown('fProdukProduksi', '');
+    if (typeof bridge !== 'undefined' && bridge.direct) {
+      bridge.direct('getNextBatchNumber').then(function(r) {
+        if (r && r.data) document.getElementById('fBatchProduksi').value = r.data;
+      });
+    }
   });
 }
 
@@ -3053,6 +3058,11 @@ function showProduksi(){
     html+='<div id="produksiResult" style="margin-top:12px"></div></div>';
     document.getElementById('stokContent').innerHTML=html;
     loadProdukDropdown('fProdukProduksi', '');
+    if (typeof bridge !== 'undefined' && bridge.direct) {
+      bridge.direct('getNextBatchNumber').then(function(r) {
+        if (r && r.data) document.getElementById('fBatchProduksi').value = r.data;
+      });
+    }
   });
 }
 function saveProduksi(){
