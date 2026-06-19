@@ -107,16 +107,6 @@ tr:hover{background:#FAFAFA}
   --lp-art-3: rgba(236,72,153,0.04);
   --lp-art-grad: linear-gradient(160deg, #0B1220 0%, #111827 50%, #1E293B 100%);
 }
-  --lp-input-ring: #3B82F6;
-  --lp-accent: #3B82F6;
-  --lp-accent-hover: #60A5FA;
-  --lp-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
-  --lp-glass-border: rgba(255,255,255,0.04);
-  --lp-art-1: rgba(59,130,246,0.08);
-  --lp-art-2: rgba(139,92,246,0.05);
-  --lp-art-3: rgba(236,72,153,0.03);
-  --lp-art-grad: linear-gradient(160deg, #0B1220 0%, #111827 50%, #1E293B 100%);
-}
 
 #page-login { background: var(--lp-bg); min-height: 100vh; position: relative; overflow: hidden; }
 
@@ -523,13 +513,18 @@ body.sales-layout .tabbar{display:flex !important}
 const SUPABASE_URL = 'https://byuocfavyxlotmoslihv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_nf3b87N70ut3fPWwDeeBUQ_XvJ15S0Q';
 
-const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true }
-});
-const __SUPABASE_SERVICE_ROLE_KEY = '';
+let _supabase = null;
 let _supabaseAdmin = null;
 try {
-  if (__SUPABASE_SERVICE_ROLE_KEY && __SUPABASE_SERVICE_ROLE_KEY !== '') {
+  if (typeof supabase !== 'undefined') {
+    _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    });
+  }
+} catch(e) { console.warn('[Bridge] Supabase init failed:', e.message); }
+const __SUPABASE_SERVICE_ROLE_KEY = '';
+try {
+  if (__SUPABASE_SERVICE_ROLE_KEY && __SUPABASE_SERVICE_ROLE_KEY !== '' && typeof supabase !== 'undefined') {
     _supabaseAdmin = supabase.createClient(SUPABASE_URL, __SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, storageKey: 'sb-admin-token' } });
   }
 } catch(e) { _supabaseAdmin = null; }
