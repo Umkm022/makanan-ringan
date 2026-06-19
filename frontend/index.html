@@ -849,10 +849,13 @@ async function _handleResetAllData() {
     'expenses', 'invoice_details', 'invoices',
     'notifications', 'payments', 'productions',
     'produk', 'receivables', 'returns',
-    'shipment_details', 'shipments',
+    'sales_targets', 'shipment_details', 'shipments',
+    'stock_opname_items', 'stock_opnames',
     'stock_request_items', 'stock_requests',
-    'visit_details', 'visits', 'warehouse_stock',
-    'customers', 'products', 'categories', 'sales'
+    'visit_details', 'visit_reminders', 'visits',
+    'warehouse_stock',
+    'customers', 'products', 'product_categories',
+    'categories', 'sales'
   ];
   for (var t of tables) {
     try { await _supabase.from(t).delete().neq('id', '00000000-0000-0000-0000-000000000000'); }
