@@ -27,8 +27,6 @@ Migrasi dari Google Apps Script + Google Sheets ke Supabase (PostgreSQL + Auth +
 │   └── verify.mjs             # Verifikasi output build
 ├── Migration/                 # Script migrasi data dari GAS
 ├── backfill_stock.sql         # SQL backfill stok gudang
-├── netlify.toml               # Config Netlify (legacy)
-├── firebase.json              # Config Firebase Hosting (legacy)
 └── supabase-config.json       # Credentials (gitignored)
 ```
 

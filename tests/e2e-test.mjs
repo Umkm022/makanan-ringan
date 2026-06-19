@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { writeFileSync, mkdirSync } from 'fs';
 
-const BASE_URL = 'https://usahaku-453.netlify.app';
+const BASE_URL = 'https://supplier-seblak.pages.dev';
 const REPORT_DIR = './test-report';
 const RESULTS = { passed: 0, failed: 0, skipped: 0, details: [] };
 const CONSOLE_ERRORS = [];

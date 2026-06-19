@@ -5,5 +5,3 @@ migration/id-mapping.json
 .env
 .env.local
 
-# Local Netlify folder
-.netlify

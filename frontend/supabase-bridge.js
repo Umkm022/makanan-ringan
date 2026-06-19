@@ -1,6 +1,4 @@
-// ═══════════════════════════════════════════════════════════════════
 // SUPABASE BRIDGE — replaces google.script.run with Supabase SDK
-// ═══════════════════════════════════════════════════════════════════
 
 const SUPABASE_URL = 'https://byuocfavyxlotmoslihv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_nf3b87N70ut3fPWwDeeBUQ_XvJ15S0Q';
