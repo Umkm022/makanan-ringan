@@ -2468,6 +2468,7 @@ function initSetupData(){
   html+='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   html+='<button class="btn btn-primary" id="wizBtn" onclick="showWizard()">🚀 Setup Wizard (8 Langkah)</button>';
   html+='<button class="btn btn-outline" id="seedBtn2" onclick="seedData()">🌱 Seed Sample Data</button>';
+  html+='<button class="btn btn-danger" onclick="resetAllData()" style="margin-left:auto">🗑️ Reset Semua Data</button>';
   html+='</div>';
   html+='<div id="setupContent">';
   html+='<div class="card"><h4>Status Sistem</h4><div id="systemStatus"><div class="loading">Memeriksa...</div></div></div>';
@@ -2790,6 +2791,23 @@ function seedData(){
     }else{
       el.innerHTML='<div style="color:var(--error)">❌ Gagal: '+(r.message||'')+'</div>';
     }
+  });
+}
+
+function resetAllData(){
+  confirmModal('⚠️ YAKIN ingin mereset SEMUA data?\n\nSemua produk, customer, sales, kunjungan, stok, invoice, pembayaran, komisi, biaya, dan data transaksi lainnya akan DIHAPUS.\n\nAkun Owner dan User akan tetap aman.\n\nTindakan ini TIDAK BISA DIBATALKAN!').then(function(ok){
+    if(!ok)return;
+    var btn=document.querySelector('button[onclick="resetAllData()"]');
+    if(btn){btn.disabled=true;btn.textContent='⏳ Mereset...'}
+    api('resetAllData',{},function(r){
+      if(btn){btn.disabled=false;btn.textContent='🗑️ Reset Semua Data'}
+      if(r.success){
+        toast('✅ Semua data berhasil direset');
+        initSetupData();
+      }else{
+        toast('❌ Gagal: '+r.message);
+      }
+    });
   });
 }
 

@@ -40,6 +40,8 @@ const bridge = {
         return _handleCheckSystemReady();
       case 'setupOwner':
         return _handleSetupOwner(args[0]);
+      case 'resetAllData':
+        return _handleResetAllData();
       case 'validateSession':
         return _handleValidateSession(args[0]);
       case 'getProdukDirect':
@@ -320,6 +322,26 @@ async function _handleSetupOwner(params) {
   });
   if (insertErr) return fail(insertErr.message);
   return ok(null, 'Setup berhasil');
+}
+
+async function _handleResetAllData() {
+  var tables = [
+    'activity_logs', 'bank_accounts', 'cash_transactions',
+    'commissions', 'consignment_stock', 'customer_groups',
+    'expenses', 'invoice_details', 'invoices',
+    'notifications', 'payments', 'productions',
+    'produk', 'receivables', 'returns',
+    'shipment_details', 'shipments',
+    'stock_request_items', 'stock_requests',
+    'visit_details', 'visits', 'warehouse_stock',
+    'customers', 'products', 'categories', 'sales'
+  ];
+  for (var t of tables) {
+    try { await _supabase.from(t).delete().neq('id', '00000000-0000-0000-0000-000000000000'); }
+    catch (e) { console.warn('Reset skip ' + t + ': ' + e.message); }
+  }
+  try { await _supabase.from('settings').delete().neq('key', 'setup_done'); } catch (e) {}
+  return ok(null, 'Semua data berhasil direset. User/Akun tetap aman.');
 }
 
 async function _handleGetProduk() {

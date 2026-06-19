@@ -558,6 +558,8 @@ const bridge = {
         return _handleCheckSystemReady();
       case 'setupOwner':
         return _handleSetupOwner(args[0]);
+      case 'resetAllData':
+        return _handleResetAllData();
       case 'validateSession':
         return _handleValidateSession(args[0]);
       case 'getProdukDirect':
@@ -838,6 +840,26 @@ async function _handleSetupOwner(params) {
   });
   if (insertErr) return fail(insertErr.message);
   return ok(null, 'Setup berhasil');
+}
+
+async function _handleResetAllData() {
+  var tables = [
+    'activity_logs', 'bank_accounts', 'cash_transactions',
+    'commissions', 'consignment_stock', 'customer_groups',
+    'expenses', 'invoice_details', 'invoices',
+    'notifications', 'payments', 'productions',
+    'produk', 'receivables', 'returns',
+    'shipment_details', 'shipments',
+    'stock_request_items', 'stock_requests',
+    'visit_details', 'visits', 'warehouse_stock',
+    'customers', 'products', 'categories', 'sales'
+  ];
+  for (var t of tables) {
+    try { await _supabase.from(t).delete().neq('id', '00000000-0000-0000-0000-000000000000'); }
+    catch (e) { console.warn('Reset skip ' + t + ': ' + e.message); }
+  }
+  try { await _supabase.from('settings').delete().neq('key', 'setup_done'); } catch (e) {}
+  return ok(null, 'Semua data berhasil direset. User/Akun tetap aman.');
 }
 
 async function _handleGetProduk() {
@@ -5394,6 +5416,7 @@ function initSetupData(){
   html+='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   html+='<button class="btn btn-primary" id="wizBtn" onclick="showWizard()">🚀 Setup Wizard (8 Langkah)</button>';
   html+='<button class="btn btn-outline" id="seedBtn2" onclick="seedData()">🌱 Seed Sample Data</button>';
+  html+='<button class="btn btn-danger" onclick="resetAllData()" style="margin-left:auto">🗑️ Reset Semua Data</button>';
   html+='</div>';
   html+='<div id="setupContent">';
   html+='<div class="card"><h4>Status Sistem</h4><div id="systemStatus"><div class="loading">Memeriksa...</div></div></div>';
@@ -5716,6 +5739,23 @@ function seedData(){
     }else{
       el.innerHTML='<div style="color:var(--error)">❌ Gagal: '+(r.message||'')+'</div>';
     }
+  });
+}
+
+function resetAllData(){
+  confirmModal('⚠️ YAKIN ingin mereset SEMUA data?\n\nSemua produk, customer, sales, kunjungan, stok, invoice, pembayaran, komisi, biaya, dan data transaksi lainnya akan DIHAPUS.\n\nAkun Owner dan User akan tetap aman.\n\nTindakan ini TIDAK BISA DIBATALKAN!').then(function(ok){
+    if(!ok)return;
+    var btn=document.querySelector('button[onclick="resetAllData()"]');
+    if(btn){btn.disabled=true;btn.textContent='⏳ Mereset...'}
+    api('resetAllData',{},function(r){
+      if(btn){btn.disabled=false;btn.textContent='🗑️ Reset Semua Data'}
+      if(r.success){
+        toast('✅ Semua data berhasil direset');
+        initSetupData();
+      }else{
+        toast('❌ Gagal: '+r.message);
+      }
+    });
   });
 }
 
