@@ -2355,6 +2355,8 @@ bridge._actions['getVisitReminders'] = async () => {
   reminders.sort(function(a, b) { return b.days_since_last_visit - a.days_since_last_visit; });
   return ok(reminders);
 };
+bridge._actions['resetAllData'] = async () => _handleResetAllData();
+
 bridge._actions['getSystemStatus'] = async () => {
   const [users, sales, customers, produk, kunjungan, invoices] = await Promise.all([
     safeCount('users'), safeCount('sales'), safeCount('customers'),
