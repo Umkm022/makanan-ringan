@@ -1329,7 +1329,7 @@ bridge._actions['getAllRiwayatKunjungan'] = async (params) => {
   if (profile.role === 'SALES' && profile.sales_id) q = q.eq('sales_id', profile.sales_id);
   else if (d && d.salesId) q = q.eq('sales_id', d.salesId);
   const { data } = await q.order('created_at', { ascending: false });
-  return ok((data || []).map(function(v){ return mapFields(v, visitMap)); });
+  return ok((data || []).map(function(v){ return mapFields(v, visitMap); }));
 };
 
 bridge._actions['getDraftKunjungan'] = async () => {
