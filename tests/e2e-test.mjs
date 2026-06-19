@@ -38,7 +38,7 @@ async function waitForContent(page, timeout = 15000) {
 
 async function loginAs(page, role) {
   const OWNER_PASS = process.env.TEST_OWNER_PASS || 'seblak123';
-  const SALES_PASS = process.env.TEST_SALES_PASS || 'sebelak123';
+  const SALES_PASS = process.env.TEST_SALES_PASS || 'seblak123';
   const creds = role === 'OWNER'
     ? { username: 'owner', password: OWNER_PASS }
     : { username: 'andi', password: SALES_PASS };

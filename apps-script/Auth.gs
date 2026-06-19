@@ -124,11 +124,8 @@ function checkAccess(userRole, requiredRole) {
 }
 
 function requireRole(session, requiredRole) {
-  if (!session) return respond(false, 'Unauthorized. Silakan login.', null);
-  if (!checkAccess(session.role, requiredRole)) {
-    return respond(false, 'Forbidden. Anda tidak memiliki akses.', null);
-  }
-  return null; // access granted
+  if (!session) return false;
+  return checkAccess(session.role, requiredRole);
 }
 
 function hashPassword(password) {

@@ -659,10 +659,10 @@ var KunjunganService = {
     var result = [];
     all.forEach(function(c) {
       if (c.status === 'NONAKTIF' || c.status === 'SUSPEND') return;
-      var lastVisit = c.last_visit ? new String(c.last_visit).indexOf('0') > -1 ? null : new Date(c.last_visit) : null;
+      var lastVisit = null;
       if (c.last_visit) {
         var ts = new Date(c.last_visit);
-        lastVisit = ts.getTime() > 0 ? ts : null;
+        if (ts.getTime() > 0) lastVisit = ts;
       }
       var daysSince = lastVisit ? Math.floor((now - lastVisit) / (1000*60*60*24)) : 999;
       var urgency = daysSince >= 7 ? 'red' : (daysSince >= 3 ? 'yellow' : 'green');

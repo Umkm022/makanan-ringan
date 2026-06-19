@@ -7,8 +7,8 @@ function doGet(e) {
   try {
     if (e && e.parameter && e.parameter.page === 'manifest') {
       var manifest = {
-        "name": "Macaroni Ku",
-        "short_name": "MacaroniKu",
+        "name": "Supplier Seblak",
+        "short_name": "SupplierSeblak",
         "start_url": ScriptApp.getService().getUrl(),
         "display": "standalone",
         "background_color": "#C62828",
@@ -18,7 +18,7 @@ function doGet(e) {
       return ContentService.createTextOutput(JSON.stringify(manifest)).setMimeType(ContentService.MimeType.JSON);
     }
     var html = HtmlService.createTemplateFromFile('index').evaluate()
-      .setTitle('Macaroni Ku')
+      .setTitle('Supplier Seblak')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
       .setSandboxMode(HtmlService.SandboxMode.IFRAME)
       .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
@@ -184,11 +184,11 @@ function routeAction(action, params, session) {
     // BIAYA OPERASIONAL
     case 'getBiaya':              return BiayaService.getBiaya(params);
     case 'createBiaya':           return BiayaService.createBiaya(params.data, session);
-    case 'deleteBiaya':           if (requireRole(session, 'ADMIN')) return respond(false, 'Forbidden', null); return BiayaService.deleteBiaya(params.id);
+    case 'deleteBiaya':           if (!requireRole(session, 'ADMIN')) return respond(false, 'Forbidden', null); return BiayaService.deleteBiaya(params.id);
 
     // SETTINGS
-    case 'getAllSettings':        if (requireRole(session, 'OWNER')) return respond(false, 'Forbidden', null); var _s = SettingsService.getAllSettings(); var _sd = {}; if (Array.isArray(_s)) _s.forEach(function(it){if(it.key)_sd[it.key]=it.value;}); return respond(true, '', _sd);
-    case 'updateSetting':         if (requireRole(session, 'OWNER')) return respond(false, 'Forbidden', null); return SettingsService.updateSetting(params.key, params.value, session.user_id);
+    case 'getAllSettings':        if (!requireRole(session, 'OWNER')) return respond(false, 'Forbidden', null); var _s = SettingsService.getAllSettings(); var _sd = {}; if (Array.isArray(_s)) _s.forEach(function(it){if(it.key)_sd[it.key]=it.value;}); return respond(true, '', _sd);
+    case 'updateSetting':         if (!requireRole(session, 'OWNER')) return respond(false, 'Forbidden', null); return SettingsService.updateSetting(params.key, params.value, session.user_id);
 
     // USERS
     case 'getUsers':              return respond(true, '', getDataAsObjects('01_USERS'));

@@ -80,21 +80,21 @@ var NotifikasiService = {
 
   requestTitipAwal: function(params, session) {
     var customerId = params.customer_id;
-    if (!customerId) return respond(false, 'Customer ID diperlukan');
+    if (!customerId) return respond(false, 'Customer ID diperlukan', null);
 
     var allNotif = getDataAsObjects('26_NOTIFIKASI');
     var existing = allNotif.filter(function(n) {
       return n.tipe === 'REQUEST_TITIP_AWAL' && !n.is_read && n.pesan.indexOf(customerId) > -1;
     });
-    if (existing.length > 0) return respond(false, 'Sudah pernah minta titip awal untuk toko ini, tunggu Owner proses');
+    if (existing.length > 0) return respond(false, 'Sudah pernah minta titip awal untuk toko ini, tunggu Owner proses', null);
 
     var customers = getDataAsObjects('04_CUSTOMERS');
     var cust = customers.filter(function(c) { return c.customer_id === customerId || c.id === customerId; })[0];
-    if (!cust) return respond(false, 'Customer tidak ditemukan');
+    if (!cust) return respond(false, 'Customer tidak ditemukan', null);
 
     var users = getDataAsObjects('01_USERS');
     var owners = users.filter(function(u) { return u.role === 'OWNER'; });
-    if (owners.length === 0) return respond(false, 'Tidak ada Owner terdaftar');
+    if (owners.length === 0) return respond(false, 'Tidak ada Owner terdaftar', null);
 
     var pesan = 'Sales ' + (session.full_name || session.username) + ' meminta titip awal untuk ' + (cust.store_name || cust.nama) + ' (' + customerId + ')';
     var link = '?page=titipan&customer_id=' + customerId;

@@ -24,7 +24,25 @@ var TitipanService = {
     var stokSheet = getSheet('09_STOK_GUDANG');
     var konsSheet = getSheet('10_STOK_KONSINYASI');
 
-    data.items.forEach(function(item) {
+    var gudangData = stokSheet.getDataRange().getValues();
+    var konsData = konsSheet.getDataRange().getValues();
+
+    // Validate stock across all rows (multi-batch) before any mutations
+    for (var ii = 0; ii < data.items.length; ii++) {
+      var item = data.items[ii];
+      var totalAvailable = 0;
+      for (var gi = 1; gi < gudangData.length; gi++) {
+        if (gudangData[gi][1] === item.produk_id) {
+          totalAvailable += (gudangData[gi][3] || 0) - (gudangData[gi][4] || 0);
+        }
+      }
+      if (item.qty > totalAvailable) {
+        return respond(false, 'Stok ' + item.produk_id + ' tidak mencukupi. Tersedia: ' + totalAvailable + ', diminta: ' + item.qty, null);
+      }
+    }
+
+    for (var ii = 0; ii < data.items.length; ii++) {
+      var item = data.items[ii];
       var detId = 'TPD-' + ('000' + (detSheet.getLastRow())).slice(-3);
       var batch = data.batch_number || '';
       var produk = ProdukService.getProdukById(item.produk_id);
@@ -34,33 +52,33 @@ var TitipanService = {
         batch, new Date()
       ]);
 
-      // Kurangi stok gudang
-      var gudangData = stokSheet.getDataRange().getValues();
-      for (var i = 1; i < gudangData.length; i++) {
-        if (gudangData[i][1] === item.produk_id) {
-          var available = (gudangData[i][3] || 0) - (gudangData[i][4] || 0);
-          if (item.qty > available) {
-            return respond(false, 'Stok ' + item.produk_id + ' tidak mencukupi. Tersedia: ' + available + ', diminta: ' + item.qty, null);
-          }
-          var qtyKeluar = (gudangData[i][4] || 0) + item.qty;
-          var qtySisa = (gudangData[i][3] || 0) - qtyKeluar;
-          stokSheet.getRange(i+1, 5).setValue(qtyKeluar);
-          stokSheet.getRange(i+1, 6).setValue(qtySisa);
-          stokSheet.getRange(i+1, 8).setValue(new Date());
-          break;
+      // Kurangi stok gudang — iterate across all matching batch rows
+      var sisaKurang = item.qty;
+      for (var gi = 1; gi < gudangData.length && sisaKurang > 0; gi++) {
+        if (gudangData[gi][1] === item.produk_id) {
+          var rowAvailable = (gudangData[gi][3] || 0) - (gudangData[gi][4] || 0);
+          var deduct = Math.min(sisaKurang, rowAvailable);
+          var qtyKeluarBaru = (gudangData[gi][4] || 0) + deduct;
+          var qtySisaBaru = (gudangData[gi][3] || 0) - qtyKeluarBaru;
+          stokSheet.getRange(gi + 1, 5).setValue(qtyKeluarBaru);
+          stokSheet.getRange(gi + 1, 6).setValue(qtySisaBaru);
+          stokSheet.getRange(gi + 1, 8).setValue(new Date());
+          sisaKurang -= deduct;
+          // update cached row data for subsequent items
+          gudangData[gi][4] = qtyKeluarBaru;
+          gudangData[gi][5] = qtySisaBaru;
         }
       }
 
       // Tambah / update stok konsinyasi
-      var konsData = konsSheet.getDataRange().getValues();
       var found = false;
       for (var j = 1; j < konsData.length; j++) {
         if (konsData[j][1] === data.customer_id && konsData[j][2] === item.produk_id) {
           var newTitip = (konsData[j][4] || 0) + item.qty;
           var newSisa = (konsData[j][8] || 0) + item.qty;
-          konsSheet.getRange(j+1, 5).setValue(newTitip);
-          konsSheet.getRange(j+1, 9).setValue(newSisa);
-          konsSheet.getRange(j+1, 12).setValue(new Date());
+          konsSheet.getRange(j + 1, 5).setValue(newTitip);
+          konsSheet.getRange(j + 1, 9).setValue(newSisa);
+          konsSheet.getRange(j + 1, 12).setValue(new Date());
           found = true;
           break;
         }
@@ -74,7 +92,7 @@ var TitipanService = {
           '', new Date(), new Date(), new Date()
         ]);
       }
-    });
+    }
 
     logActivity(session.user_id, 'CREATE', 'TITIP', titipId, 'Titip barang: ' + totalQty + ' items', null, data);
     clearDataCache();

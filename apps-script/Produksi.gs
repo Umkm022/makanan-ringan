@@ -11,7 +11,7 @@ var ProduksiService = {
     var today = new Date();
     var dateStr = Utilities.formatDate(today, Session.getScriptTimeZone(), 'yyyyMMdd');
     var seq = sheet.getLastRow();
-    var prodId = 'PRD-' + dateStr + '-' + ('000' + seq).slice(-3);
+    var prodId = 'PRK-' + dateStr + '-' + ('000' + seq).slice(-3);
     var batch = 'BATCH-' + dateStr + '-' + ('000' + seq).slice(-3);
 
     sheet.appendRow([

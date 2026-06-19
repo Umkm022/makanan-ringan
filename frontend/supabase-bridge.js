@@ -8,11 +8,16 @@ const SUPABASE_ANON_KEY = 'sb_publishable_nf3b87N70ut3fPWwDeeBUQ_XvJ15S0Q';
 const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true }
 });
-const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5dW9jZmF2eXhsb3Rtb3NsaWh2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTMwMDI0MCwiZXhwIjoyMDk2ODc2MjQwfQ.Ibnw0g1_7A7t65qtwofI0SihAxkTxnIqgYtherKna8M';
+const __SUPABASE_SERVICE_ROLE_KEY = '__SUPABASE_SERVICE_ROLE_KEY__';
 let _supabaseAdmin = null;
 try {
-  _supabaseAdmin = supabase.createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, storageKey: 'sb-admin-token' } });
+  if (__SUPABASE_SERVICE_ROLE_KEY && __SUPABASE_SERVICE_ROLE_KEY !== '__SUPABASE_SERVICE_ROLE_KEY__') {
+    _supabaseAdmin = supabase.createClient(SUPABASE_URL, __SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, storageKey: 'sb-admin-token' } });
+  }
 } catch(e) { _supabaseAdmin = null; }
+// ⚠️ WARNING: The service role key is replaced at BUILD TIME from environment variable SUPABASE_SERVICE_ROLE_KEY.
+// In production, configure SUPABASE_SERVICE_ROLE_KEY as a build secret (Netlify env / GitHub secret).
+// Never commit the actual key to the repository.
 
 // ── Auth helpers ───────────────────────────────────────────────────
 const bridge = {
@@ -1735,7 +1740,8 @@ bridge._actions['getSalesDashboard'] = async (params) => {
   var unpaid = (invoices.data || []).filter(function(i){ return i.status === 'UNPAID' || i.status === 'OVERDUE'; }).length;
   var todayVisits = (visits.data || []).filter(function(v){ return (v.visit_date || '').substring(0, 10) === today; });
 
-  var { data: profileData } = await _supabase.from('sales').select('target_bulanan').eq('id', profile.sales_id).maybeSingle();
+  var profileData = await _supabase.from('sales').select('target_bulanan').eq('id', profile.sales_id).maybeSingle();
+  var profileRow = profileData.data || {};
   var pencapaian = omzet;
 
   return ok({
@@ -1748,8 +1754,8 @@ bridge._actions['getSalesDashboard'] = async (params) => {
       komisi_paid: komisiPaid,
       invoice_belum_lunas: unpaid,
     },
-    target_bulanan: (profileData.data || {}).target_bulanan || 0,
-    persentase: pencapaian > 0 ? Math.round(Math.min(pencapaian / ((profileData.data || {}).target_bulanan || 1), 1) * 100) : 0,
+    target_bulanan: profileRow.target_bulanan || 0,
+    persentase: pencapaian > 0 ? Math.round(Math.min(pencapaian / (profileRow.target_bulanan || 1), 1) * 100) : 0,
     pencapaian: pencapaian,
     total_visits: visits.count || 0,
     customers: (customers.data || []).map(function(c){ return mapFields(c, customerMap); }),
@@ -2038,10 +2044,17 @@ bridge._actions['generateReport'] = async (params) => {
     }
     // ── 11. Laba Kotor ──────────────────────────────────────────
     case 'laba_kotor': {
-      const { data: details } = await _supabase.from('invoice_details').select('*');
+      const { data: details } = await _supabase.from('invoice_details').select('*, invoices(invoice_date)');
       const data = {};
       (details || []).forEach(function(d) {
-        const key = d.invoice_id ? d.invoice_id.substring(0, 7) : 'unknown';
+        var invDate = d.invoices ? d.invoices.invoice_date : null;
+        var key;
+        if (invDate) {
+          var dt = new Date(invDate);
+          key = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0');
+        } else {
+          key = 'unknown';
+        }
         if (!data[key]) data[key] = { periode: key, total_penjualan: 0, total_hpp: 0, laba_kotor: 0 };
         data[key].total_penjualan += d.subtotal || 0;
         data[key].total_hpp += (d.hpp || 0) * (d.qty || 0);

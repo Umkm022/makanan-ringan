@@ -196,17 +196,22 @@ var ReportService = {
   // 11. Laba Kotor
   _labaKotor: function(params) {
     var details = getDataAsObjects('19_INVOICE_DETAIL');
-    var produk = getDataAsObjects('06_PRODUK');
+    var invoices = getDataAsObjects('18_INVOICE_HEADER');
+    var invMap = {};
+    invoices.forEach(function(inv) { invMap[inv.invoice_id] = inv; });
     var data = {};
     var periode = params && params.periode;
     details.forEach(function(d) {
-      var key = periode === 'tahunan' ? (d.invoice_id || '').substring(4,8) : (d.invoice_id || '').substring(4,7);
+      var inv = invMap[d.invoice_id];
+      if (!inv) return;
+      var dt = new Date(inv.tanggal_invoice);
+      var key = periode === 'tahunan' ? String(dt.getFullYear()) : dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0');
       if (!data[key]) data[key] = { periode: key, total_penjualan: 0, total_hpp: 0, laba_kotor: 0 };
       data[key].total_penjualan += d.subtotal || 0;
       data[key].total_hpp += (d.hpp || 0) * (d.qty || 0);
       data[key].laba_kotor += d.laba || 0;
     });
-    return respond(true, '', Object.values(data).sort(function(a,b) { return a.periode - b.periode; }));
+    return respond(true, '', Object.values(data).sort(function(a,b) { return a.periode < b.periode ? -1 : 1; }));
   },
 
   // 12. Laba Bersih (konsisten dengan dashboard)

@@ -22,7 +22,7 @@ var StokService = {
     if (row < 0) return respond(false, 'Data tidak ditemukan', null);
     var qtyMasuk = data.qty_masuk !== undefined ? Number(data.qty_masuk) : sheet.getRange(row, 4).getValue();
     var qtyKeluar = data.qty_keluar !== undefined ? Number(data.qty_keluar) : sheet.getRange(row, 5).getValue();
-    var qtySisa = qtyMasuk - qtyKeluar;
+    var qtySisa = data.qty_sisa !== undefined ? Number(data.qty_sisa) : qtyMasuk - qtyKeluar;
     if (qtySisa < 0) qtySisa = 0;
     sheet.getRange(row, 4).setValue(qtyMasuk);
     sheet.getRange(row, 5).setValue(qtyKeluar);

@@ -64,7 +64,11 @@ function build() {
   const supabaseSdk = '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>';
   const bridgeJs = readFileSync(resolve(__dirname, 'supabase-bridge.js'), 'utf8');
   const authJs = readFileSync(resolve(__dirname, 'auth.js'), 'utf8');
-  const inlineScript = '<script>\n' + bridgeJs + '\n' + authJs + '\n</script>';
+  let inlineScript = '<script>\n' + bridgeJs + '\n' + authJs + '\n</script>';
+
+  // Replace service role key placeholder with env var (set at deploy time)
+  const svcRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  inlineScript = inlineScript.replace(/__SUPABASE_SERVICE_ROLE_KEY__/g, svcRoleKey);
 
   html = html.replace('</head>', '  ' + supabaseSdk + '\n  ' + inlineScript + '\n</head>');
 

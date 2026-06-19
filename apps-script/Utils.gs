@@ -192,11 +192,4 @@ function calculateMargin(hpp, hargaJual) {
   return Math.round(((hargaJual - hpp) / hargaJual) * 100);
 }
 
-function filterBySalesAccess(data, userId, salesId) {
-  var session = validateSession(userId);
-  if (!session) return [];
-  if (session.role === 'SALES') {
-    return data.filter(function(item) { return item.sales_id === salesId; });
-  }
-  return data;
-}
+

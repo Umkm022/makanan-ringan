@@ -84,6 +84,15 @@ var SalesPersonService = {
     var existing = sheet.getRange(row, 1, 1, 17).getValues()[0];
     sheet.getRange(row, 10).setValue('NONAKTIF');
 
+    var userId = existing[1];
+    if (userId) {
+      var userSheet = getSheet('01_USERS');
+      var userRow = findRow('01_USERS', 0, userId);
+      if (userRow > 0) {
+        userSheet.getRange(userRow, 8).setValue(false);
+      }
+    }
+
     clearDataCache();
     logActivity('SYSTEM', 'DELETE', 'SALES', id, 'Nonaktifkan sales: ' + (existing[3] || id), null, null);
     return respond(true, 'Sales dinonaktifkan', null);

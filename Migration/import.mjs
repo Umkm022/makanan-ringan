@@ -318,7 +318,7 @@ async function main() {
   for (let i = 0; i < visitRows.length; i++) {
     const row = visitRows[i];
     const newId = idMap.get(`__VISIT_${i}__`).newId;
-    // Schema: id, customer_id, sales_id, visit_date, start_time, end_time, status, total_sold, total_returned, total_invoice, notes, photo_toko, latitude, longitude, has_restock, created_at, updated_at
+    // Schema: id, customer_id, sales_id, visit_date, start_time, end_time, status, total_sold, total_returned, total_invoice, notes, photos, latitude, longitude, has_restock, created_at, updated_at
     const rec = {
       id: newId,
       customer_id: row.customer_id && row.customer_id !== '' ? resolveFk(row.customer_id, 'customers') : null,
@@ -331,7 +331,7 @@ async function main() {
       total_returned: row.total_retur && row.total_retur !== '' ? Number(row.total_retur) : 0,
       total_invoice: row.total_invoice && row.total_invoice !== '' ? Number(row.total_invoice) : 0,
       notes: row.notes || null,
-      photo_toko: row.foto_toko || null,
+      photos: row.foto_toko || null,
       latitude: row.latitude || null,
       longitude: row.longitude || null,
       has_restock: row.has_restock || false,
