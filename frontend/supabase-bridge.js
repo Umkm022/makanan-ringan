@@ -988,12 +988,18 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
       try {
         var dt = new Date();
         var ds = dt.getFullYear() + String(dt.getMonth()+1).padStart(2,'0') + String(dt.getDate()).padStart(2,'0');
-        var ck = 'inv_counter_' + dt.getFullYear() + String(dt.getMonth()+1).padStart(2,'0');
-        var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
-        var cnt = cr ? (parseInt(cr.value) + 1) : 1;
-        var invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
-        if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
-        else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
+        var invNum = null;
+        try {
+          var ck = 'inv_counter_' + dt.getFullYear() + String(dt.getMonth()+1).padStart(2,'0');
+          var { data: cr } = await _supabase.from('settings').select('value').eq('key', ck).maybeSingle();
+          var cnt = cr ? (parseInt(cr.value) + 1) : 1;
+          invNum = 'INV-' + ds + '-' + String(cnt).padStart(4,'0');
+          if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
+          else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
+        } catch(e) {
+          var { count } = await _supabase.from('invoices').select('id', { count: 'exact', head: true }).gte('created_at', ds + 'T00:00:00').lte('created_at', ds + 'T23:59:59');
+          invNum = 'INV-' + ds + '-' + String((count || 0) + 1).padStart(4,'0');
+        }
         try { await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id); } catch(e) {
           try { await _supabase.from('invoices').update({ notes: '##INV:' + invNum + '##' }).eq('id', inv.id); } catch(e2) {}
         }
