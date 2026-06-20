@@ -4985,9 +4985,9 @@ function initKunjungan(role){
     showKunjBuat();
   }else{
     html+='<div style="display:flex;gap:8px;margin-bottom:16px">';
-    html+='<span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span>';
-    html+='<span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span>';
-    html+='<span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span>';
+    html+='<span id="step1" class="btn btn-sm btn-primary" style="cursor:pointer" onclick="goToStep(1)">1. Pilih Customer</span>';
+    html+='<span id="step2" class="btn btn-sm btn-outline" style="cursor:pointer;opacity:.5" onclick="goToStep(2)">2. Catat Stok</span>';
+    html+='<span id="step3" class="btn btn-sm btn-outline" style="cursor:pointer;opacity:.5" onclick="goToStep(3)">3. Finalisasi</span>';
     html+='</div>';
     html+='<div id="kunjunganContent"></div>';
     mc.innerHTML=html;
@@ -5000,7 +5000,7 @@ function showKunjBuat(){
   document.getElementById('kunjBuatBtn').className='btn btn-primary';
   document.getElementById('kunjRiwayatBtn').className='btn btn-outline';
   var conte=document.getElementById('kunjunganContent');
-  conte.innerHTML='<div style="display:flex;gap:8px;margin-bottom:16px"><span id="step1" class="btn btn-sm btn-primary" style="cursor:default">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:default;opacity:.5">3. Finalisasi</span></div><div id="kunjStepContent"></div>';
+  conte.innerHTML='<div style="display:flex;gap:8px;margin-bottom:16px"><span id="step1" class="btn btn-sm btn-primary" style="cursor:pointer" onclick="goToStep(1)">1. Pilih Customer</span><span id="step2" class="btn btn-sm btn-outline" style="cursor:pointer;opacity:.5" onclick="goToStep(2)">2. Catat Stok</span><span id="step3" class="btn btn-sm btn-outline" style="cursor:pointer;opacity:.5" onclick="goToStep(3)">3. Finalisasi</span></div><div id="kunjStepContent"></div>';
   kunjunganState={};
   showKunjunganStep1();
 }
@@ -5057,6 +5057,20 @@ function filterRiwayatKunj(){
 }
 
 var _kunjSalesFilter = '';
+
+function goToStep(n) {
+  if (n === 1) { showKunjunganStep1(); return; }
+  if (n === 2) {
+    if (!kunjunganState.kunjunganId) { toast('Kunjungan belum dimulai'); return; }
+    if (kunjunganState.checkinDone) { showKunjunganStep2(); return; }
+    showKunjunganCheckIn();
+    return;
+  }
+  if (n === 3) {
+    if (!kunjunganState.stokSaved) { toast('Simpan stok dulu'); return; }
+    showKunjunganStep3();
+  }
+}
 
 function showKunjunganStep1(){
   var el=document.getElementById('kunjunganContent');
@@ -5428,6 +5442,7 @@ function simpanSisaStok(){
       p.retur = it.retur;
       p.terjual = Math.max(0, (it.stok_awal||0) - it.sisa_fisik - (it.rusak||0) - (it.retur||0));
     });
+    kunjunganState.stokSaved = true;
     document.getElementById('step2').classList.remove('btn-outline');
     document.getElementById('step2').classList.add('btn-success');
     document.getElementById('step2').style.opacity='1';
