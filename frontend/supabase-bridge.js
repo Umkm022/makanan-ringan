@@ -432,7 +432,7 @@ bridge._actions['createCustomer'] = async (params) => {
             user_id: owner.id, tipe: 'CUSTOMER_BARU',
             judul: '🏪 Toko Baru', pesan,
             link: '?page=customer',
-            is_read: false, created_at: new Date(),
+            is_read: false, created_at: new Date().toISOString(),
           });
         }
       }
@@ -516,6 +516,11 @@ bridge._actions['getProduk'] = async () => {
   mapped.forEach(p => {
     if (p.categories) p.kategori_nama = p.categories.name;
   });
+  // Sembunyikan HPP untuk role SALES
+  var profile = await getCurrentProfile();
+  if (profile.role === 'SALES') {
+    mapped.forEach(function(p) { delete p.hpp; delete p.harga_modal; });
+  }
   return ok(mapped);
 };
 
@@ -856,9 +861,19 @@ bridge._actions['startKunjungan'] = async (params) => {
   if (!customer) return fail('Customer tidak ditemukan');
   if (profile.role === 'SALES' && customer.sales_id !== profile.sales_id) return fail('Akses ditolak: bukan customer Anda');
   const salesId = customer.sales_id;
+  
+  const todayDate = new Date().toISOString().substring(0, 10);
+  const { data: existingVisit } = await _supabase.from('visits')
+    .select('id')
+    .eq('customer_id', customer.id)
+    .eq('sales_id', salesId)
+    .eq('visit_date', todayDate)
+    .maybeSingle();
+  if (existingVisit) return fail('Toko ini sudah dikunjungi hari ini');
+
   const { data: visit, error } = await _supabase.from('visits').insert({
     customer_id: customer.id, sales_id: salesId,
-    visit_date: new Date().toISOString().substring(0, 10), start_time: new Date().toTimeString().substring(0, 8),
+    visit_date: todayDate, start_time: new Date().toTimeString().substring(0, 8),
     status: 'DRAFT', latitude: d.latitude || '', longitude: d.longitude || '',
   }).select().single();
   if (error) return fail(error.message);
@@ -1084,7 +1099,7 @@ bridge._actions['updateStokGudang'] = async (params) => {
     qty_out: d.qty_keluar,
     qty_remaining: d.qty_sisa,
     unit: d.satuan,
-  }).eq('id', d.id).select().single();
+  }).eq('id', params.id || d.id).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Stok berhasil diupdate');
 };
@@ -1150,7 +1165,7 @@ bridge._actions['updateStokKonsinyasi'] = async (params) => {
     qty_returned: d.qty_retur,
     qty_remaining: d.qty_sisa,
     target_display: d.target_display,
-  }).eq('id', d.id).select().single();
+  }).eq('id', params.id).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Stok konsinyasi berhasil diupdate');
 };
@@ -1616,12 +1631,14 @@ bridge._actions['createProduksi'] = async (params) => {
   var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.produk_id).maybeSingle();
   if (gudang) {
     await _supabase.from('warehouse_stock').update({
+      batch_number: d.batch_number,
       qty_in: (gudang.qty_in || 0) + qty,
       qty_remaining: (gudang.qty_remaining || 0) + qty,
     }).eq('id', gudang.id);
   } else {
     await _supabase.from('warehouse_stock').insert({
       product_id: d.produk_id,
+      batch_number: d.batch_number,
       qty_in: qty,
       qty_out: 0,
       qty_remaining: qty,
@@ -2531,7 +2548,7 @@ bridge._actions['requestTitipAwal'] = async (params) => {
     await _supabase.from('notifications').insert({
       user_id: owner.id, tipe: 'REQUEST_TITIP_AWAL',
       judul: '📦 Request Titip Awal', pesan, link,
-      is_read: false, created_at: new Date()
+      is_read: false, created_at: new Date().toISOString()
     });
   }
   return ok(null, '✅ Permintaan titip awal sudah dikirim ke Owner');

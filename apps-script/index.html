@@ -1013,6 +1013,8 @@ function afterPageLoad(id){
 function showModal(html){
   document.getElementById('modalContent').innerHTML=html;
   document.getElementById('modalOverlay').style.display='flex';
+  var card = document.querySelector('.modal-card');
+  if (card) card.scrollTop = 0;
 }
 function closeModal(){document.getElementById('modalOverlay').style.display='none'}
 
@@ -1625,11 +1627,11 @@ function renderProduk(items){
   var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
   html+='<h3 style="color:var(--primary)">📦 Produk</h3>';
   html+='<div><button class="btn btn-sm btn-outline" onclick="initProduk(true)" style="margin-right:8px">🔄 Refresh</button>' + (isSales ? '' : '<button class="btn btn-primary" onclick="showProdukForm({})">+ Tambah</button>') + '</div></div>';
-  html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama</th><th>Varian</th><th>Harga Jual</th><th>Modal</th>'+(isSales?'':'<th>Aksi</th>')+'</tr></thead><tbody>';
+  html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama</th><th>Varian</th><th>Harga Jual</th>'+(isSales?'':'<th>Modal</th>')+(isSales?'':'<th>Aksi</th>')+'</tr></thead><tbody>';
   if(items.length){
     items.forEach(function(p){
       var safe=JSON.stringify(p).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
-      html+='<tr><td>'+(p.kode_produk||p.kode||'')+'</td><td><strong>'+(p.nama_produk||p.nama||'')+'</strong></td><td>'+(p.varian||'')+'</td><td>Rp '+fmt(p.harga_jual||0)+'</td><td>Rp '+fmt(p.hpp||p.harga_modal||0)+'</td>'+(isSales?'':'<td><button class="btn btn-sm btn-outline" onclick="showProdukForm('+safe+')" title="Edit">✏️</button> <button class="btn btn-sm btn-danger" onclick="hapusProduk(\''+(p.produk_id||p.id)+'\')" title="Hapus">🗑️</button></td>')+'</tr>';
+      html+='<tr><td>'+(p.kode_produk||p.kode||'')+'</td><td><strong>'+(p.nama_produk||p.nama||'')+'</strong></td><td>'+(p.varian||'')+'</td><td>Rp '+fmt(p.harga_jual||0)+'</td>'+(isSales?'':'<td>Rp '+fmt(p.hpp||p.harga_modal||0)+'</td>')+(isSales?'':'<td><button class="btn btn-sm btn-outline" onclick="showProdukForm('+safe+')" title="Edit">✏️</button> <button class="btn btn-sm btn-danger" onclick="hapusProduk(\''+(p.produk_id||p.id)+'\')" title="Hapus">🗑️</button></td>')+'</tr>';
     });
   }else{
     html+='<tr><td colspan="'+(isSales?5:6)+'" style="text-align:center;color:var(--text-light)">Belum ada produk.</td></tr>';
@@ -1843,6 +1845,8 @@ function previewCustFoto(){
     document.getElementById('fCustFotoPreview').innerHTML='<img src="'+e.target.result+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px;object-fit:cover" alt="preview"><div style="font-size:11px;color:var(--text-light);margin-top:2px">'+file.name+'</div>';
   };
   reader.readAsDataURL(file);
+  var inp = document.getElementById('fCustFoto');
+  if (inp) inp.style.pointerEvents = 'none';
 }
 
 function parseCustomerNotes(notes){
@@ -3035,6 +3039,24 @@ function showStokGudang(){
   });
 }
 var _stokSalesFilter = '';
+var _stokCustFilter = '';
+
+function loadStokCustDropdown() {
+  var sel = document.getElementById('fStokCust');
+  if (!sel) return;
+  var prev = sel.value;
+  sel.innerHTML = '<option value="">Semua Customer</option>';
+  api('getCustomers', {}, function(r) {
+    if (!r.success) return;
+    (r.data || []).forEach(function(c) {
+      var opt = document.createElement('option');
+      opt.value = c.customer_id || c.id || '';
+      opt.textContent = c.store_name || c.nama || '';
+      sel.appendChild(opt);
+    });
+    if (prev) sel.value = prev;
+  });
+}
 
 function showStokKonsinyasi(){
   var el=document.getElementById('stokContent');
@@ -3042,11 +3064,13 @@ function showStokKonsinyasi(){
   loadSalesDropdown('', '', function() {
     var params={};
     if(_stokSalesFilter)params.sales_id=_stokSalesFilter;
+    if(_stokCustFilter)params.customer_id=_stokCustFilter;
     api('getStokKonsinyasi',params,function(r){
       if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
       var data=r.data||[];
-      var html='<div class="form-group" style="max-width:300px"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
-      if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', '');return}
+      var html='<div class="form-row"><div class="form-group" style="flex:1"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
+      html+='<div class="form-group" style="flex:1"><label>Filter Customer</label><select id="fStokCust" onchange="filterStokKonsinyasi()"></select></div></div>';
+      if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', _stokSalesFilter);loadStokCustDropdown();return}
       html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>ID Produk</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
       data.forEach(function(s){
         var cust=s.customers||{}, prod=s.products||{}, sal=s.sales||{};
@@ -3055,12 +3079,14 @@ function showStokKonsinyasi(){
       html+='</tbody></table></div></div>';
       el.innerHTML=html;
       loadSalesDropdown('fStokSales', _stokSalesFilter);
+      loadStokCustDropdown();
     });
   });
 }
 
 function filterStokKonsinyasi(){
   _stokSalesFilter=document.getElementById('fStokSales').value;
+  _stokCustFilter=document.getElementById('fStokCust').value;
   showStokKonsinyasi();
 }
 function showProduksi(){
@@ -3988,7 +4014,7 @@ function simpanEditStokGudang(id) {
   };
   api('updateStokGudang', {id: id, data: data}, function(r) {
     closeModal();
-    if (r.success) { toast('✅ Stok gudang diupdate'); showStokGudangSales(); } else { toast('Error: ' + (r.message || '')); }
+    if (r.success) { toast('✅ Stok gudang diupdate'); if (document.getElementById('stokContent')) showStokGudang(); else showStokGudangSales(); } else { toast('Error: ' + (r.message || '')); }
   });
 }
 function hapusStokGudang(id) {
@@ -4820,7 +4846,7 @@ function printSuratJalan(shipmentId) {
     html += '</table>';
     html += '</div>';
     var w = window.open('', '_blank');
-    w.document.write('<html><head><style>body{margin:0;padding:20px}@media print{@page{margin:15mm}body{padding:0}}</style></head><body>' + html + '<script>window.print();window.close();<\/script></body></html>');
+    w.document.write('<html><head><style>body{margin:0;padding:20px}@media print{@page{margin:40mm 15mm 20mm 15mm}body{padding:0}}</style></head><body>' + html + '<script>window.print();window.close();<\/script></body></html>');
     w.document.close();
   });
 }

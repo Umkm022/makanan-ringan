@@ -60,6 +60,17 @@ var CustomerService = {
     ];
     sheet.appendRow(row);
     logActivity(session.user_id, 'CREATE', 'CUSTOMER', newId, 'Tambah customer: ' + data.store_name, null, data);
+    // Notifikasi ke Owner jika Sales yang daftarkan
+    if (session && session.role === 'SALES') {
+      try {
+        var users = getDataAsObjects('01_USERS');
+        var owners = users.filter(function(u) { return u.role === 'OWNER'; });
+        var pesan = 'Sales ' + (session.full_name || session.username) + ' mendaftarkan toko baru: ' + data.store_name;
+        owners.forEach(function(o) {
+          NotifikasiService.createNotif(o.user_id, 'CUSTOMER_BARU', '🏪 Toko Baru', pesan, '?page=customer');
+        });
+      } catch(e) { console.error('Notif Owner gagal: ' + e.message); }
+    }
     clearDataCache();
     return respond(true, 'Customer berhasil ditambahkan', { customer_id: newId });
   },

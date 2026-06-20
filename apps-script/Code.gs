@@ -146,6 +146,7 @@ function routeAction(action, params, session) {
 
     // STOK
     case 'getStokGudang':         return StokService.getStokGudang();
+    case 'getStokById':           return StokService.getStokById(params.id);
     case 'updateStokGudang':      return StokService.updateStokGudang(params.id, params.data, session);
     case 'deleteStokGudang':      return StokService.deleteStokGudang(params.id, session);
     case 'getStokKonsinyasi':     return StokService.getStokKonsinyasi(params, session);

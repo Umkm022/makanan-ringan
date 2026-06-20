@@ -10,9 +10,28 @@ var StokService = {
     all = all.map(function(s) {
       var p = produkList.filter(function(pr) { return pr.produk_id === s.produk_id; })[0] || {};
       s.produk_nama = p.nama_produk || s.produk_id;
+      s.qty_in = s.qty_masuk;
+      s.qty_out = s.qty_keluar;
+      s.qty_remaining = s.qty_sisa;
+      s.batch = s.batch_number;
       return s;
     });
     return respond(true, '', all);
+  },
+
+  getStokById: function(id) {
+    var all = getDataAsObjects('09_STOK_GUDANG');
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].stok_gudang_id === id || all[i].id === id) {
+        var s = all[i];
+        s.qty_in = s.qty_masuk;
+        s.qty_out = s.qty_keluar;
+        s.qty_remaining = s.qty_sisa;
+        s.batch = s.batch_number;
+        return respond(true, '', s);
+      }
+    }
+    return respond(false, 'Data tidak ditemukan', null);
   },
 
   updateStokGudang: function(id, data, session) {

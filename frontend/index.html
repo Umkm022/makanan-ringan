@@ -1034,6 +1034,11 @@ bridge._actions['getProduk'] = async () => {
   mapped.forEach(p => {
     if (p.categories) p.kategori_nama = p.categories.name;
   });
+  // Sembunyikan HPP untuk role SALES
+  var profile = await getCurrentProfile();
+  if (profile.role === 'SALES') {
+    mapped.forEach(function(p) { delete p.hpp; delete p.harga_modal; });
+  }
   return ok(mapped);
 };
 
@@ -1602,7 +1607,7 @@ bridge._actions['updateStokGudang'] = async (params) => {
     qty_out: d.qty_keluar,
     qty_remaining: d.qty_sisa,
     unit: d.satuan,
-  }).eq('id', d.id).select().single();
+  }).eq('id', params.id).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Stok berhasil diupdate');
 };
@@ -1668,7 +1673,7 @@ bridge._actions['updateStokKonsinyasi'] = async (params) => {
     qty_returned: d.qty_retur,
     qty_remaining: d.qty_sisa,
     target_display: d.target_display,
-  }).eq('id', d.id).select().single();
+  }).eq('id', params.id).select().single();
   if (error) return fail(error.message);
   return ok(data, 'Stok konsinyasi berhasil diupdate');
 };
@@ -2134,12 +2139,14 @@ bridge._actions['createProduksi'] = async (params) => {
   var { data: gudang } = await _supabase.from('warehouse_stock').select('*').eq('product_id', d.produk_id).maybeSingle();
   if (gudang) {
     await _supabase.from('warehouse_stock').update({
+      batch_number: d.batch_number,
       qty_in: (gudang.qty_in || 0) + qty,
       qty_remaining: (gudang.qty_remaining || 0) + qty,
     }).eq('id', gudang.id);
   } else {
     await _supabase.from('warehouse_stock').insert({
       product_id: d.produk_id,
+      batch_number: d.batch_number,
       qty_in: qty,
       qty_out: 0,
       qty_remaining: qty,
@@ -3736,9 +3743,11 @@ function buildTabs(role){
     tabs.push({id:'dashboard',label:'Dashboard',icon:'📊'});
     tabs.push({id:'produk',label:'Produk',icon:'📦'});
     tabs.push({id:'customer',label:'Customer',icon:'👥'});
+    tabs.push({id:'grup-customer',label:'Grup Cust',icon:'🏷️'});
     tabs.push({id:'sales-list',label:'Sales',icon:'👤'});
     tabs.push({id:'kunjungan',label:'Kunjungan',icon:'🚗'});
     tabs.push({id:'invoice',label:'Invoice',icon:'💰'});
+    tabs.push({id:'piutang',label:'Piutang',icon:'💸'});
     tabs.push({id:'stok-produksi',label:'Stok',icon:'🏭'});
     tabs.push({id:'produksi',label:'Produksi',icon:'🏭'});
     tabs.push({id:'titipan',label:'Titipan',icon:'📤'});
@@ -3756,6 +3765,7 @@ function buildTabs(role){
     tabs.push({id:'customer',label:'Toko',icon:'👥'});
     tabs.push({id:'produk',label:'Produk',icon:'📦'});
     tabs.push({id:'invoice',label:'Tagihan',icon:'💰'});
+    tabs.push({id:'piutang',label:'Piutang',icon:'💸'});
     tabs.push({id:'stok-sales',label:'Stok',icon:'📦'});
     tabs.push({id:'map',label:'Peta',icon:'🗺️'});
     tabs.push({id:'stock-request',label:'Request',icon:'📋'});
@@ -3804,7 +3814,7 @@ function activateTab(id){
   // Update page title
   var titleEl=document.getElementById('pageTitle');
   if(titleEl){
-    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','customer':'👥 Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','stok-produksi':'🏭 Stok','produksi':'🏭 Produksi','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','rekening':'🏦 Rekening','stock-request':'📋 Request Stok','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
+    var labels={'dashboard':'📊 Dashboard','produk':'📦 Produk','customer':'👥 Customer','grup-customer':'🏷️ Grup Customer','sales-list':'👤 Sales','kunjungan':'🚗 Kunjungan','invoice':'💰 Invoice','piutang':'💸 Piutang','stok-produksi':'🏭 Stok','produksi':'🏭 Produksi','titipan':'📤 Titipan','biaya':'💸 Biaya','komisi':'🏆 Komisi','rekening':'🏦 Rekening','stock-request':'📋 Request Stok','laporan':'📈 Laporan','map':'🗺️ Peta','setup-data':'⚙️ Setup','visit':'🚗 Kunjungan','history':'📋 Riwayat','stok-sales':'📦 Stok','profile':'👤 Profile','log-viewer':'📋 Log'};
     titleEl.textContent=labels[id]||'📊 Dashboard';
   }
 }
@@ -3905,7 +3915,7 @@ window.addEventListener('popstate', function(e) {
 
 function getCacheKey(page){
   var map = {
-    'dashboard':'dashboard','produk':'produk','customer':'customer','sales-list':'salesList',
+    'dashboard':'dashboard','produk':'produk','customer':'customer','grup-customer':'grupCustomer','sales-list':'salesList',
     'kunjungan':'kunjungan','invoice':'invoice','stok-produksi':'stokProduksi','titipan':'titipan',
     'biaya':'biaya','komisi':'komisi','rekening':'rekening','stock-request':'stockRequest','produksi':'produksi','laporan':'laporan','map':'map','setup-data':'setup',
     'visit':'visit','history':'history','stok-sales':'stokSales','profile':'profile','log-viewer':'logs'
@@ -3955,6 +3965,8 @@ function afterPageLoad(id){
    else if(id==='sales-list')initSalesList();
    else if(id==='biaya')initBiaya();
    else if(id==='komisi')initKomisi();
+   else if(id==='piutang')initPiutang();
+   else if(id==='grup-customer')showCustomerGroups();
    else if(id==='rekening')initRekening();
    else if(id==='stock-request')initStockRequest();
    else if(id==='map')initMap();
@@ -3966,6 +3978,9 @@ function afterPageLoad(id){
 function showModal(html){
   document.getElementById('modalContent').innerHTML=html;
   document.getElementById('modalOverlay').style.display='flex';
+  // Scroll modal content to top
+  var card = document.querySelector('.modal-card');
+  if (card) card.scrollTop = 0;
 }
 function closeModal(){document.getElementById('modalOverlay').style.display='none'}
 
@@ -4114,6 +4129,20 @@ function loadSalesDropdown(selectId, selectedValue, callback) {
   api('getSalesList', {}, function(r) {
     if (r.success) setCached('salesList', r);
     if (selectId) populateSelect(selectId, (r.data||[]), 'sales_id', 'full_name', 'nama', selectedValue, 'Semua Sales');
+    if (callback) callback();
+  });
+}
+
+function loadCustomerDropdown(selectId, selectedValue, callback) {
+  var cached = getCached('customers', 300);
+  if (cached && cached.success) {
+    if (selectId) populateSelect(selectId, cached.data, 'id', 'store_name', 'nama', selectedValue, 'Semua Toko');
+    if (callback) callback();
+    return;
+  }
+  api('getCustomers', {}, function(r) {
+    if (r.success) setCached('customers', r);
+    if (selectId) populateSelect(selectId, (r.data||[]), 'id', 'store_name', 'nama', selectedValue, 'Semua Toko');
     if (callback) callback();
   });
 }
@@ -4578,11 +4607,11 @@ function renderProduk(items){
   var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
   html+='<h3 style="color:var(--primary)">📦 Produk</h3>';
   html+='<div><button class="btn btn-sm btn-outline" onclick="initProduk(true)" style="margin-right:8px">🔄 Refresh</button>' + (isSales ? '' : '<button class="btn btn-primary" onclick="showProdukForm({})">+ Tambah</button>') + '</div></div>';
-  html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama</th><th>Varian</th><th>Harga Jual</th><th>Modal</th>'+(isSales?'':'<th>Aksi</th>')+'</tr></thead><tbody>';
+  html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama</th><th>Varian</th><th>Harga Jual</th>'+(isSales?'':'<th>Modal</th>')+(isSales?'':'<th>Aksi</th>')+'</tr></thead><tbody>';
   if(items.length){
     items.forEach(function(p){
       var safe=JSON.stringify(p).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
-      html+='<tr><td>'+(p.kode_produk||p.kode||'')+'</td><td><strong>'+(p.nama_produk||p.nama||'')+'</strong></td><td>'+(p.varian||'')+'</td><td>Rp '+fmt(p.harga_jual||0)+'</td><td>Rp '+fmt(p.hpp||p.harga_modal||0)+'</td>'+(isSales?'':'<td><button class="btn btn-sm btn-outline" onclick="showProdukForm('+safe+')" title="Edit">✏️</button> <button class="btn btn-sm btn-danger" onclick="hapusProduk(\''+(p.produk_id||p.id)+'\')" title="Hapus">🗑️</button></td>')+'</tr>';
+      html+='<tr><td>'+(p.kode_produk||p.kode||'')+'</td><td><strong>'+(p.nama_produk||p.nama||'')+'</strong></td><td>'+(p.varian||'')+'</td><td>Rp '+fmt(p.harga_jual||0)+'</td>'+(isSales?'':'<td>Rp '+fmt(p.hpp||p.harga_modal||0)+'</td>')+(isSales?'':'<td><button class="btn btn-sm btn-outline" onclick="showProdukForm('+safe+')" title="Edit">✏️</button> <button class="btn btn-sm btn-danger" onclick="hapusProduk(\''+(p.produk_id||p.id)+'\')" title="Hapus">🗑️</button></td>')+'</tr>';
     });
   }else{
     html+='<tr><td colspan="'+(isSales?5:6)+'" style="text-align:center;color:var(--text-light)">Belum ada produk.</td></tr>';
@@ -4762,7 +4791,7 @@ function showCustomerForm(c){
     html+='<div class="form-group"><label>Sales</label><select id="fCustSales"><option value="">Pilih Sales...</option></select></div>';
   }
   html+='<div class="form-group"><label>Keterangan</label><textarea id="fCustNotes" rows="2">'+(pn.text||'')+'</textarea></div>';
-  html+='<div class="form-group"><label>Foto Toko</label><input type="file" accept="image/*" id="fCustFoto" onchange="previewCustFoto()"><div id="fCustFotoPreview">'+(pn.photo?'<img src="https://byuocfavyxlotmoslihv.supabase.co/storage/v1/object/public/customer-photos/'+pn.photo+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px" alt="preview">':'')+'</div></div>';
+  html+='<div class="form-group"><label>Foto Toko</label><input type="file" accept="image/*" capture="environment" id="fCustFoto" onchange="previewCustFoto()"><div id="fCustFotoPreview">'+(pn.photo?'<img src="https://byuocfavyxlotmoslihv.supabase.co/storage/v1/object/public/customer-photos/'+pn.photo+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px" alt="preview">':'')+'</div></div>';
   html+='<div class="modal-actions">';
   html+='<button class="btn btn-outline" onclick="closeModal()">Batal</button>';
   html+='<button class="btn btn-primary" onclick="simpanCustomer(\''+id+'\')">'+(isEdit?'Simpan':'Tambah')+'</button>';
@@ -4796,6 +4825,9 @@ function previewCustFoto(){
     document.getElementById('fCustFotoPreview').innerHTML='<img src="'+e.target.result+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px;object-fit:cover" alt="preview"><div style="font-size:11px;color:var(--text-light);margin-top:2px">'+file.name+'</div>';
   };
   reader.readAsDataURL(file);
+  // Prevent file input from intercepting clicks on mobile after photo selection
+  var inp = document.getElementById('fCustFoto');
+  if (inp) inp.style.pointerEvents = 'none';
 }
 
 function parseCustomerNotes(notes){
@@ -4856,6 +4888,63 @@ function simpanCustomer(id){
 
 function hapusCustomer(id){
   confirmAndDelete('deleteCustomer', id, 'customer', 'Hapus customer ini?');
+}
+
+// ====== GRUP CUSTOMER ======
+function showCustomerGroups() {
+  var mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Memuat grup customer...</div>';
+  api('getCustomerGroups', {}, function(r) {
+    if (!r.success) { mc.innerHTML = '<div class="card"><p>Error: ' + (r.message || '') + '</p></div>'; return; }
+    var data = r.data || [];
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+    html += '<h3 style="color:var(--primary)">🏷️ Grup Customer</h3>';
+    html += '<div><button class="btn btn-sm btn-outline" onclick="showCustomerGroups()" style="margin-right:8px">🔄 Refresh</button><button class="btn btn-primary" onclick="showGrupForm({})">+ Tambah Grup</button></div></div>';
+    html += '<div class="card"><div class="table-wrap"><table><thead><tr><th>Nama Grup</th><th>Deskripsi</th><th>Jumlah Customer</th><th>Aksi</th></tr></thead><tbody>';
+    if (data.length) {
+      data.forEach(function(g) {
+        var safe = JSON.stringify(g).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+        html += '<tr><td><strong>' + (g.name || '') + '</strong></td><td>' + (g.description || '-') + '</td><td>' + (g.customer_count || 0) + '</td>';
+        html += '<td><button class="btn btn-sm btn-outline" onclick="showGrupForm(' + safe + ')" title="Edit">✏️</button> ';
+        html += '<button class="btn btn-sm btn-danger" onclick="hapusGrupCustomer(\'' + (g.id || '') + '\')" title="Hapus">🗑️</button></td></tr>';
+      });
+    } else {
+      html += '<tr><td colspan="4" style="text-align:center;color:var(--text-light)">Belum ada grup customer.</td></tr>';
+    }
+    html += '</tbody></table></div></div>';
+    mc.innerHTML = html;
+  });
+}
+
+function showGrupForm(g) {
+  var isEdit = !!(g.id);
+  var html = '<h3>' + (isEdit ? 'Edit Grup Customer' : 'Tambah Grup Customer') + '</h3>';
+  html += '<div class="form-group"><label>Nama Grup</label><input id="fGrupNama" value="' + (g.name || '') + '"></div>';
+  html += '<div class="form-group"><label>Deskripsi</label><textarea id="fGrupDesc" rows="2">' + (g.description || '') + '</textarea></div>';
+  html += '<div class="modal-actions">';
+  html += '<button class="btn btn-outline" onclick="closeModal()">Batal</button>';
+  html += '<button class="btn btn-primary" onclick="simpanGrupCustomer(\'' + (g.id || '') + '\')">' + (isEdit ? 'Simpan' : 'Tambah') + '</button></div>';
+  showModal(html);
+}
+
+function simpanGrupCustomer(id) {
+  var data = {
+    nama_grup: document.getElementById('fGrupNama').value.trim(),
+    deskripsi: document.getElementById('fGrupDesc').value.trim()
+  };
+  if (!data.nama_grup) { toast('Nama grup harus diisi'); return; }
+  var action = id ? 'updateCustomerGroup' : 'createCustomerGroup';
+  var params = { data: data };
+  if (id) params.id = id;
+  api(action, params, function(r) {
+    closeModal();
+    if (r.success) { toast('Grup berhasil disimpan'); showCustomerGroups(); }
+    else { toast('Error: ' + (r.message || '')); }
+  });
+}
+
+function hapusGrupCustomer(id) {
+  confirmAndDelete('deleteCustomerGroup', id, 'grup-customer', 'Hapus grup customer ini? Customer dalam grup ini tidak akan terhapus.');
 }
 
 // ====== KUNJUNGAN ======
@@ -5989,31 +6078,39 @@ function showStokGudang(){
 }
 var _stokSalesFilter = '';
 
+var _stokCustFilter = '';
+
 function showStokKonsinyasi(){
   var el=document.getElementById('stokContent');
   el.innerHTML='<div class="loading">Memuat stok konsinyasi...</div>';
   loadSalesDropdown('', '', function() {
-    var params={};
-    if(_stokSalesFilter)params.sales_id=_stokSalesFilter;
-    api('getStokKonsinyasi',params,function(r){
-      if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
-      var data=r.data||[];
-      var html='<div class="form-group" style="max-width:300px"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
-      if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', '');return}
-      html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>ID Produk</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
-      data.forEach(function(s){
-        var cust=s.customers||{}, prod=s.products||{}, sal=s.sales||{};
-        html+='<tr><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(sal.full_name||s.sales_id||'')+'</td><td style="font-size:11px;color:var(--text-light)">'+(prod.code||s.produk_id||'')+'</td><td>'+(prod.name||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>';
+    loadCustomerDropdown('', '', function() {
+      var params={};
+      if(_stokSalesFilter)params.sales_id=_stokSalesFilter;
+      if(_stokCustFilter)params.customer_id=_stokCustFilter;
+      api('getStokKonsinyasi',params,function(r){
+        if(!r.success){el.innerHTML='<div class="card"><p>Error: '+(r.message||'')+'</p></div>';return}
+        var data=r.data||[];
+        var html='<div class="form-row"><div class="form-group" style="flex:1"><label>Filter Sales</label><select id="fStokSales" onchange="filterStokKonsinyasi()"></select></div>';
+        html+='<div class="form-group" style="flex:1"><label>Filter Customer</label><select id="fStokCust" onchange="filterStokKonsinyasi()"></select></div></div>';
+        if(data.length===0){html+='<div class="card"><p style="color:var(--text-light)">Stok konsinyasi kosong.</p></div>';el.innerHTML=html;loadSalesDropdown('fStokSales', _stokSalesFilter);loadCustomerDropdown('fStokCust', _stokCustFilter);return}
+        html+='<div class="card"><h4>Stok Konsinyasi</h4><div style="overflow-x:auto"><table><thead><tr><th>Customer</th><th>Sales</th><th>ID Produk</th><th>Produk</th><th>Titip Awal</th><th>Terjual</th><th>Retur</th><th>Sisa</th></tr></thead><tbody>';
+        data.forEach(function(s){
+          var cust=s.customers||{}, prod=s.products||{}, sal=s.sales||{};
+          html+='<tr><td>'+(cust.store_name||s.customer_id||'')+'</td><td>'+(sal.full_name||s.sales_id||'')+'</td><td style="font-size:11px;color:var(--text-light)">'+(prod.code||s.produk_id||'')+'</td><td>'+(prod.name||'')+'</td><td>'+(s.qty_titip_awal||0)+'</td><td>'+(s.qty_terjual||0)+'</td><td>'+(s.qty_retur||0)+'</td><td><strong>'+(s.qty_sisa||0)+'</strong></td></tr>';
+        });
+        html+='</tbody></table></div></div>';
+        el.innerHTML=html;
+        loadSalesDropdown('fStokSales', _stokSalesFilter);
+        loadCustomerDropdown('fStokCust', _stokCustFilter);
       });
-      html+='</tbody></table></div></div>';
-      el.innerHTML=html;
-      loadSalesDropdown('fStokSales', _stokSalesFilter);
     });
   });
 }
 
 function filterStokKonsinyasi(){
   _stokSalesFilter=document.getElementById('fStokSales').value;
+  _stokCustFilter=document.getElementById('fStokCust').value;
   showStokKonsinyasi();
 }
 function showProduksi(){
@@ -6452,8 +6549,6 @@ function renderInvoiceNav() {
   var role=(CURRENT_USER||{}).role;
   var html = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   html += '<button class="btn ' + (_invoiceView === 'invoices' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'invoices\')">Semua Invoice</button>';
-  html += '<button class="btn ' + (_invoiceView === 'piutang' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'piutang\')">Piutang Aktif</button>';
-  html += '<button class="btn ' + (_invoiceView === 'aging' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'aging\')">Aging Piutang</button>';
   html += '<button class="btn ' + (_invoiceView === 'setor' ? 'btn-primary' : 'btn-outline') + '" onclick="switchInvView(\'setor\')">Setor</button>';
   html += '</div>';
   if(role==='OWNER'||role==='ADMIN'){
@@ -6486,9 +6581,53 @@ function switchInvView(view) {
 
 function loadInvoiceView() {
   if (_invoiceView === 'invoices') loadInvList();
-  else if (_invoiceView === 'piutang') loadPiutangList();
-  else if (_invoiceView === 'aging') loadAgingList();
   else if (_invoiceView === 'setor') loadSetorList();
+}
+
+// ====== PIUTANG ======
+var _piutangView = 'piutang';
+var _piutangSalesFilter = '';
+
+function initPiutang() {
+  _piutangView = 'piutang';
+  _piutangSalesFilter = '';
+  renderPiutangNav();
+}
+
+function renderPiutangNav() {
+  var role=(CURRENT_USER||{}).role;
+  var html = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+  html += '<button class="btn ' + (_piutangView === 'piutang' ? 'btn-primary' : 'btn-outline') + '" onclick="switchPiutangView(\'piutang\')">Piutang Aktif</button>';
+  html += '<button class="btn ' + (_piutangView === 'aging' ? 'btn-primary' : 'btn-outline') + '" onclick="switchPiutangView(\'aging\')">Aging Piutang</button>';
+  html += '</div>';
+  if(role==='OWNER'||role==='ADMIN'){
+    html += '<div class="form-group" style="max-width:300px;margin-bottom:12px"><label>Filter Sales</label><select id="fPiutangSales" onchange="filterPiutangSales()"><option value="">Semua Sales</option></select></div>';
+  }
+  html += '<div id="piutangContent"><div class="loading">Memuat...</div></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  if(role==='OWNER'||role==='ADMIN') {
+    loadSalesDropdown('fPiutangSales', _piutangSalesFilter, function() { loadPiutangView(); });
+  } else loadPiutangView();
+}
+
+function switchPiutangView(view) {
+  var prevView = _piutangView;
+  _piutangView = view;
+  if (prevView !== view) {
+    _navStack.push(CURRENT_PAGE + '|piu:' + prevView);
+    window.history.pushState({page: CURRENT_PAGE, piuView: view}, '');
+  }
+  renderPiutangNav();
+}
+
+function filterPiutangSales(){
+  _piutangSalesFilter=document.getElementById('fPiutangSales').value;
+  loadPiutangView();
+}
+
+function loadPiutangView() {
+  if (_piutangView === 'piutang') loadPiutangList();
+  else if (_piutangView === 'aging') loadAgingList();
 }
 
 function loadInvList() {
@@ -6521,11 +6660,11 @@ function renderInvTable(el, data) {
 }
 
 function loadPiutangList() {
-  var el = document.getElementById('invoiceContent');
+  var el = document.getElementById('piutangContent');
   if (!el) return;
   el.innerHTML = '<div class="loading">Memuat piutang...</div>';
   var params = { status: 'OPEN,PARTIAL' };
-  if (_invSalesFilter) params.sales_id = _invSalesFilter;
+  if (_piutangSalesFilter) params.sales_id = _piutangSalesFilter;
   api('getPiutang', params, function(r) {
     if (!r.success) { el.innerHTML = '<div class="card"><h3>Error</h3><p>' + (r.message || '') + '</p></div>'; return; }
     renderPiutangTable(el, r.data || []);
@@ -6592,11 +6731,11 @@ function doBayar() {
 }
 
 function loadAgingList() {
-  var el = document.getElementById('invoiceContent');
+  var el = document.getElementById('piutangContent');
   if (!el) return;
   el.innerHTML = '<div class="loading">Memuat aging piutang...</div>';
   var params = {};
-  if (_invSalesFilter) params.sales_id = _invSalesFilter;
+  if (_piutangSalesFilter) params.sales_id = _piutangSalesFilter;
   api('getAgingPiutang', params, function(r) {
     if (!r.success) { el.innerHTML = '<div class="card"><h3>Error</h3><p>' + (r.message || '') + '</p></div>'; return; }
     renderAgingTable(el, r.data || {});
@@ -6878,7 +7017,7 @@ function showStokGudangSales() {
     var html = '<div class="card"><h4>Stok Gudang</h4><div style="overflow-x:auto"><table><thead><tr><th>ID Produk</th><th>Produk</th><th>Batch</th><th>Masuk</th><th>Keluar</th><th>Sisa</th><th>Aksi</th></tr></thead><tbody>';
     data.forEach(function(s) {
       var prod = s.products || {};
-      html += '<tr><td style="font-size:11px;color:var(--text-light)">' + (prod.code || s.produk_id || '') + '</td><td>' + (prod.name || '') + '</td><td>' + (s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
+      html += '<tr><td style="font-size:11px;color:var(--text-light)">' + (prod.code || s.produk_id || '') + '</td><td>' + (prod.name || '') + '</td><td>' + (s.batch || s.batch_number || '-') + '</td><td>' + (s.qty_in || 0) + '</td><td>' + (s.qty_out || 0) + '</td><td><strong>' + (s.qty_remaining || 0) + '</strong></td>';
       var role = (CURRENT_USER || {}).role;
       if (role === 'OWNER') {
         html += '<td><button class="btn btn-sm btn-outline" onclick="showEditStokGudang(\'' + s.id + '\')" title="Edit">✏️</button> ';
@@ -6941,7 +7080,7 @@ function simpanEditStokGudang(id) {
   };
   api('updateStokGudang', {id: id, data: data}, function(r) {
     closeModal();
-    if (r.success) { toast('✅ Stok gudang diupdate'); showStokGudangSales(); } else { toast('Error: ' + (r.message || '')); }
+    if (r.success) { toast('✅ Stok gudang diupdate'); if (document.getElementById('stokContent')) showStokGudang(); else showStokGudangSales(); } else { toast('Error: ' + (r.message || '')); }
   });
 }
 function hapusStokGudang(id) {
@@ -6972,7 +7111,7 @@ function simpanEditStokKonsinyasi(id) {
   };
   api('updateStokKonsinyasi', {id: id, data: data}, function(r) {
     closeModal();
-    if (r.success) { toast('✅ Stok konsinyasi diupdate'); showStokKonsinyasiSales(); } else { toast('Error: ' + (r.message || '')); }
+    if (r.success) { toast('✅ Stok konsinyasi diupdate'); if (document.getElementById('stokContent')) showStokKonsinyasi(); else showStokKonsinyasiSales(); } else { toast('Error: ' + (r.message || '')); }
   });
 }
 function hapusStokKonsinyasi(id) {
@@ -7773,7 +7912,7 @@ function printSuratJalan(shipmentId) {
     html += '</table>';
     html += '</div>';
     var w = window.open('', '_blank');
-    w.document.write('<html><head><style>body{margin:0;padding:20px}@media print{@page{margin:15mm}body{padding:0}}</style></head><body>' + html + '<script>window.print();window.close();<\/script></body></html>');
+    w.document.write('<html><head><style>body{margin:0;padding:20px}@media print{@page{margin:40mm 15mm 20mm 15mm}body{padding:0}}</style></head><body>' + html + '<script>window.print();window.close();<\/script></body></html>');
     w.document.close();
   });
 }

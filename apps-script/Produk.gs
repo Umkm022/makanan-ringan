@@ -9,6 +9,16 @@ var ProdukService = {
       if (params.kategori_id) all = all.filter(function(p) { return p.kategori_id === params.kategori_id; });
       if (params.is_active !== undefined) all = all.filter(function(p) { return p.is_active === params.is_active; });
     }
+    // Sembunyikan HPP untuk role SALES
+    if (session && session.role === 'SALES') {
+      all = all.map(function(p) {
+        var safe = {};
+        for (var k in p) {
+          if (k !== 'hpp' && k !== 'harga_modal') safe[k] = p[k];
+        }
+        return safe;
+      });
+    }
     return respond(true, '', all);
   },
 

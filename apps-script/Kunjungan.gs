@@ -18,6 +18,15 @@ var KunjunganService = {
       if (salesId !== sId) return respond(false, 'Akses ditolak: bukan customer Anda', null);
     }
 
+    // Cek kunjungan hari ini untuk customer yang sama
+    var allVisits = getDataAsObjects('14_KUNJUNGAN_HEADER');
+    var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    var existingToday = allVisits.filter(function(v) {
+      var vDate = v.tanggal ? Utilities.formatDate(new Date(v.tanggal), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
+      return v.customer_id === customerId && v.sales_id === salesId && vDate === today;
+    });
+    if (existingToday.length > 0) return respond(false, 'Toko ini sudah dikunjungi hari ini', null);
+
     // Create visit header
     var visitSheet = getSheet('14_KUNJUNGAN_HEADER');
     var visitId = 'KUN-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd') +
