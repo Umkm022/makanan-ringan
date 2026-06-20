@@ -3587,7 +3587,7 @@ function renderInvTable(el, data) {
   var html = '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Tgl</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>';
   data.forEach(function(inv) {
     var tgl = inv.invoice_date ? inv.invoice_date.substring(0, 10) : '';
-    html += '<tr><td>' + (inv.id || '') + '</td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
+    html += '<tr><td>' + (inv.invoice_number || inv.id || '') + '</td><td>' + tgl + '</td><td>' + ((inv.customers && inv.customers.store_name) || inv.customer_id || '') + '</td><td>Rp ' + fmt(inv.total || 0) + '</td>';
     var st = (inv.status || '').toUpperCase();
     var cls = st === 'PAID' ? 'badge-success' : (st === 'PARTIAL' ? 'badge-warning' : 'badge-danger');
     html += '<td><span class="' + cls + '">' + st + '</span></td></tr>';
