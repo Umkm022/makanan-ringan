@@ -2462,7 +2462,7 @@ function finalisasiKunjungan(){
     document.getElementById('step3').style.opacity='1';
     var html='<div class="card" style="text-align:center;padding:40px"><div style="font-size:48px">✅</div><h3 style="color:var(--success);margin:16px 0">Kunjungan Selesai!</h3><p>'+(r.message||'Invoice telah dibuat.')+'</p>';
     if (r.data && r.data.invoice_id) {
-      html+='<button class="btn btn-success" style="margin-top:12px" onclick="printInvoice(\''+r.data.invoice_id+'\')">🖨️ Cetak Invoice</button>';
+      html+='<button class="btn btn-success" style="margin-top:12px" onclick="printInvoice(\''+r.data.invoice_id+'\',\''+(r.data.invoice_number||'')+'\')">🖨️ Cetak Invoice</button>';
     }
     html+='<button class="btn btn-primary" style="margin-top:16px" onclick="initKunjungan(\''+(CURRENT_USER.role||'OWNER')+'\')">Kunjungan Baru</button></div>';
     el.innerHTML=html;
@@ -4797,10 +4797,11 @@ function downloadCSV(type) {
   });
 }
 
-function printInvoice(invoiceId) {
+function printInvoice(invoiceId, invoiceNumber) {
   api('getInvoiceDetail', { id: invoiceId }, function(r) {
     if (!r.success) { toast('Gagal memuat invoice: ' + (r.message || '')); return; }
     var inv = r.data.invoice || {};
+    if (invoiceNumber && !inv.invoice_number) inv.invoice_number = invoiceNumber;
     var cust = inv.customers || {};
     var sal = inv.sales || {};
     var details = r.data.details || [];

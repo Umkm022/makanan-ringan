@@ -997,8 +997,12 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
           if (cr) { await _supabase.from('settings').update({ value: String(cnt) }).eq('key', ck); }
           else { await _supabase.from('settings').insert({ key: ck, value: String(cnt) }); }
         } catch(e) {
-          var { count } = await _supabase.from('invoices').select('id', { count: 'exact', head: true }).gte('created_at', ds + 'T00:00:00').lte('created_at', ds + 'T23:59:59');
-          invNum = 'INV-' + ds + '-' + String((count || 0) + 1).padStart(4,'0');
+          try {
+            var { count } = await _supabase.from('invoices').select('id', { count: 'exact', head: true }).gte('created_at', ds + 'T00:00:00').lte('created_at', ds + 'T23:59:59');
+            invNum = 'INV-' + ds + '-' + String((count || 0) + 1).padStart(4,'0');
+          } catch(e2) {
+            invNum = 'INV-' + ds + '-' + String(dt.getHours()).padStart(2,'0') + String(dt.getMinutes()).padStart(2,'0') + String(dt.getSeconds()).padStart(2,'0');
+          }
         }
         try { await _supabase.from('invoices').update({ invoice_number: invNum }).eq('id', inv.id); } catch(e) {
           try { await _supabase.from('invoices').update({ notes: '##INV:' + invNum + '##' }).eq('id', inv.id); } catch(e2) {}
@@ -1047,7 +1051,7 @@ bridge._actions['finalizeKunjungan'] = async (params) => {
       .eq('sales_id', visit.sales_id).eq('status', 'APPROVED').limit(1).maybeSingle();
     if (activeReq) { await _supabase.from('stock_requests').update({ status: 'COMPLETED' }).eq('id', activeReq.id); }
   }
-  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount, restock: restockResult }, 'Kunjungan berhasil difinalisasi');
+  return ok({ kunjungan_id: visit.id, invoice_id: invoiceId, invoice_number: inv?.invoice_number || null, payment_id: paymentId, total_terjual: visit.total_sold, total_invoice: invoiceTotal, total_paid: paymentAmount, restock: restockResult }, 'Kunjungan berhasil difinalisasi');
 };
 
 bridge._actions['cancelKunjungan'] = async (params) => {
