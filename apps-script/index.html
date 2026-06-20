@@ -2446,6 +2446,9 @@ function finalisasiKunjungan(){
     document.getElementById('step3').classList.add('btn-success');
     document.getElementById('step3').style.opacity='1';
     var html='<div class="card" style="text-align:center;padding:40px"><div style="font-size:48px">✅</div><h3 style="color:var(--success);margin:16px 0">Kunjungan Selesai!</h3><p>'+(r.message||'Invoice telah dibuat.')+'</p>';
+    if (r.data && r.data.invoice_id) {
+      html+='<button class="btn btn-success" style="margin-top:12px" onclick="printInvoice(\''+r.data.invoice_id+'\')">🖨️ Cetak Invoice</button>';
+    }
     html+='<button class="btn btn-primary" style="margin-top:16px" onclick="initKunjungan(\''+(CURRENT_USER.role||'OWNER')+'\')">Kunjungan Baru</button></div>';
     el.innerHTML=html;
     toast('Kunjungan berhasil difinalisasi!');
@@ -4776,6 +4779,78 @@ function downloadCSV(type) {
     a.click();
     URL.revokeObjectURL(a.href);
     toast('✅ CSV diunduh');
+  });
+}
+
+function printInvoice(invoiceId) {
+  api('getInvoiceDetail', { id: invoiceId }, function(r) {
+    if (!r.success) { toast('Gagal memuat invoice: ' + (r.message || '')); return; }
+    var inv = r.data.invoice || {};
+    var cust = inv.customers || {};
+    var sal = inv.sales || {};
+    var details = r.data.details || [];
+    var payments = r.data.payments || [];
+    var tgl = (inv.invoice_date || '').substring(0, 10);
+    var noInv = inv.invoice_number || inv.id || '';
+    var html = '<div style="max-width:400px;margin:0 auto;font-family:sans-serif;color:#000;font-size:12px">';
+    html += '<div style="text-align:center;border-bottom:1px dashed #000;padding-bottom:8px;margin-bottom:12px">';
+    html += '<h2 style="margin:0;font-size:16px">SUPPLIER SEBLAK</h2>';
+    html += '<p style="margin:2px 0;font-size:11px">Jl. Contoh No. 123, Bandung</p>';
+    html += '<p style="margin:2px 0;font-size:11px">Telp: 0812-3456-7890</p>';
+    html += '<h3 style="margin:8px 0 2px;font-size:13px">INVOICE</h3></div>';
+    html += '<table style="width:100%;font-size:11px;margin-bottom:12px">';
+    html += '<tr><td style="padding:1px 0"><strong>No. Invoice</strong></td><td>: ' + noInv + '</td></tr>';
+    html += '<tr><td style="padding:1px 0"><strong>Tanggal</strong></td><td>: ' + tgl + '</td></tr>';
+    html += '<tr><td style="padding:1px 0"><strong>Sales</strong></td><td>: ' + (sal.full_name || '-') + '</td></tr>';
+    html += '<tr><td style="padding:1px 0"><strong>Customer</strong></td><td>: ' + (cust.store_name || '-') + '</td></tr>';
+    if (cust.address) html += '<tr><td style="padding:1px 0"><strong>Alamat</strong></td><td style="font-size:10px">: ' + cust.address + '</td></tr>';
+    html += '</table>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px">';
+    html += '<thead><tr style="background:#f0f0f0">';
+    html += '<th style="border:1px solid #999;padding:4px 6px;text-align:center;width:30px">No</th>';
+    html += '<th style="border:1px solid #999;padding:4px 6px;text-align:left">Produk</th>';
+    html += '<th style="border:1px solid #999;padding:4px 6px;text-align:center;width:40px">Qty</th>';
+    html += '<th style="border:1px solid #999;padding:4px 6px;text-align:right;width:70px">Harga</th>';
+    html += '<th style="border:1px solid #999;padding:4px 6px;text-align:right;width:70px">Subtotal</th>';
+    html += '</tr></thead><tbody>';
+    var total = 0;
+    details.forEach(function(item, i) {
+      var prod = item.products || {};
+      var qty = item.qty || 0;
+      var price = item.price || 0;
+      var subtotal = item.subtotal || (qty * price);
+      total += subtotal;
+      html += '<tr>';
+      html += '<td style="border:1px solid #999;padding:4px 6px;text-align:center">' + (i + 1) + '</td>';
+      html += '<td style="border:1px solid #999;padding:4px 6px">' + (prod.name || item.product_id || '-') + '</td>';
+      html += '<td style="border:1px solid #999;padding:4px 6px;text-align:center">' + qty + '</td>';
+      html += '<td style="border:1px solid #999;padding:4px 6px;text-align:right">Rp ' + fmt(qty > 0 ? price : 0) + '</td>';
+      html += '<td style="border:1px solid #999;padding:4px 6px;text-align:right">Rp ' + fmt(subtotal) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700">';
+    html += '<td style="border:1px solid #999;padding:4px 6px;text-align:center" colspan="4">TOTAL</td>';
+    html += '<td style="border:1px solid #999;padding:4px 6px;text-align:right">Rp ' + fmt(total) + '</td></tr>';
+    html += '</tbody></table>';
+    if (payments.length) {
+      html += '<table style="width:100%;font-size:11px;margin-bottom:12px">';
+      html += '<tr><td style="padding:2px 0"><strong>Pembayaran:</strong></td></tr>';
+      payments.forEach(function(p) {
+        html += '<tr><td style="padding:1px 0">' + (p.method || '') + ': Rp ' + fmt(p.amount || 0) + ' (' + (p.status || '') + ')</td></tr>';
+      });
+      var sisa = (inv.total || 0) - (payments.reduce(function(s, p) { return s + (p.amount || 0); }, 0));
+      if (sisa > 0) html += '<tr><td style="padding:1px 0;color:var(--error)"><strong>Sisa: Rp ' + fmt(sisa) + '</strong></td></tr>';
+      html += '</table>';
+    }
+    if (inv.notes) html += '<div style="font-size:10px;color:#555;margin-bottom:8px"><strong>Catatan:</strong> ' + inv.notes + '</div>';
+    html += '<div style="font-size:10px;color:#555;margin-bottom:8px;font-style:italic">Terima kasih atas kerjasamanya.</div>';
+    html += '<table style="width:100%;font-size:11px;margin-top:24px">';
+    html += '<tr><td style="text-align:center;width:50%"><div style="margin-bottom:36px">Penerima,</div><div style="border-top:1px solid #000;display:inline-block;padding-top:4px;min-width:140px">( ' + (cust.store_name || '') + ' )</div></td>';
+    html += '<td style="text-align:center;width:50%"><div style="margin-bottom:36px">Hormat Kami,</div><div style="border-top:1px solid #000;display:inline-block;padding-top:4px;min-width:140px">( ' + (sal.full_name || '') + ' )</div></td></tr>';
+    html += '</table></div>';
+    var w = window.open('', '_blank');
+    w.document.write('<html><head><style>body{margin:0;padding:20px;font-family:sans-serif}@media print{@page{margin:10mm}body{padding:0}}</style></head><body>' + html + '<script>window.print();window.close();<\/script></body></html>');
+    w.document.close();
   });
 }
 
