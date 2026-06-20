@@ -129,10 +129,18 @@ function parseCustomerNotes(notes) {
     if (sep >= 0) return { photo: after.slice(0, sep), text: after.slice(sep + 2) };
     return { photo: after, text: '' };
   }
+  var idx2 = notes.indexOf('__CUSTPHOTO_DATA__:');
+  if (idx2 === 0) {
+    var after = notes.slice('__CUSTPHOTO_DATA__:'.length);
+    var sep = after.indexOf('||');
+    if (sep >= 0) return { photo: after.slice(0, sep), text: after.slice(sep + 2) };
+    return { photo: after, text: '' };
+  }
   return { photo: null, text: notes };
 }
 function customerPhotoUrl(path) {
   if (!path) return null;
+  if (path.indexOf('data:') === 0) return path;
   return SUPABASE_URL + '/storage/v1/object/public/customer-photos/' + path;
 }
 
@@ -490,19 +498,25 @@ bridge._actions['ensureCustomerPhotoBucket'] = async () => {
 bridge._actions['uploadCustomerPhoto'] = async (params) => {
   const d = params.data || params;
   if (!d.customerId || !d.dataUrl) return fail('Parameter kurang');
+  var { data: cust } = await _supabase.from('customers').select('notes').eq('id', d.customerId).single();
+  var pn = parseCustomerNotes(cust?.notes || '');
+  var uploadedToStorage = false;
   try {
     var ext = d.dataUrl.includes('png') ? 'png' : 'jpg';
     var path = d.customerId + '.' + ext;
     var blob = dataUrlToBlob(d.dataUrl);
     var client = _supabaseAdmin || _supabase;
     await client.storage.from('customer-photos').upload(path, blob, { upsert: true, contentType: 'image/' + ext });
-    // Store reference in notes field
-    var { data: cust } = await _supabase.from('customers').select('notes').eq('id', d.customerId).single();
-    var pn = parseCustomerNotes(cust?.notes || '');
+    uploadedToStorage = true;
     var newNotes = '__CUSTPHOTO__:' + path + (pn.text ? '||' + pn.text : '');
     await _supabase.from('customers').update({ notes: newNotes }).eq('id', d.customerId);
     return ok(path, 'Foto berhasil diupload');
-  } catch(e) { return fail(e.message || 'Gagal upload foto'); }
+  } catch(e) { /* fallback to inline data URL */ }
+  if (!uploadedToStorage) {
+    var newNotes = '__CUSTPHOTO_DATA__:' + d.dataUrl + (pn.text ? '||' + pn.text : '');
+    await _supabase.from('customers').update({ notes: newNotes }).eq('id', d.customerId);
+    return ok(d.dataUrl, 'Foto disimpan inline');
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════

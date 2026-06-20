@@ -647,10 +647,18 @@ function parseCustomerNotes(notes) {
     if (sep >= 0) return { photo: after.slice(0, sep), text: after.slice(sep + 2) };
     return { photo: after, text: '' };
   }
+  var idx2 = notes.indexOf('__CUSTPHOTO_DATA__:');
+  if (idx2 === 0) {
+    var after = notes.slice('__CUSTPHOTO_DATA__:'.length);
+    var sep = after.indexOf('||');
+    if (sep >= 0) return { photo: after.slice(0, sep), text: after.slice(sep + 2) };
+    return { photo: after, text: '' };
+  }
   return { photo: null, text: notes };
 }
 function customerPhotoUrl(path) {
   if (!path) return null;
+  if (path.indexOf('data:') === 0) return path;
   return SUPABASE_URL + '/storage/v1/object/public/customer-photos/' + path;
 }
 
@@ -1008,19 +1016,25 @@ bridge._actions['ensureCustomerPhotoBucket'] = async () => {
 bridge._actions['uploadCustomerPhoto'] = async (params) => {
   const d = params.data || params;
   if (!d.customerId || !d.dataUrl) return fail('Parameter kurang');
+  var { data: cust } = await _supabase.from('customers').select('notes').eq('id', d.customerId).single();
+  var pn = parseCustomerNotes(cust?.notes || '');
+  var uploadedToStorage = false;
   try {
     var ext = d.dataUrl.includes('png') ? 'png' : 'jpg';
     var path = d.customerId + '.' + ext;
     var blob = dataUrlToBlob(d.dataUrl);
     var client = _supabaseAdmin || _supabase;
     await client.storage.from('customer-photos').upload(path, blob, { upsert: true, contentType: 'image/' + ext });
-    // Store reference in notes field
-    var { data: cust } = await _supabase.from('customers').select('notes').eq('id', d.customerId).single();
-    var pn = parseCustomerNotes(cust?.notes || '');
+    uploadedToStorage = true;
     var newNotes = '__CUSTPHOTO__:' + path + (pn.text ? '||' + pn.text : '');
     await _supabase.from('customers').update({ notes: newNotes }).eq('id', d.customerId);
     return ok(path, 'Foto berhasil diupload');
-  } catch(e) { return fail(e.message || 'Gagal upload foto'); }
+  } catch(e) { /* fallback to inline data URL */ }
+  if (!uploadedToStorage) {
+    var newNotes = '__CUSTPHOTO_DATA__:' + d.dataUrl + (pn.text ? '||' + pn.text : '');
+    await _supabase.from('customers').update({ notes: newNotes }).eq('id', d.customerId);
+    return ok(d.dataUrl, 'Foto disimpan inline');
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4791,7 +4805,7 @@ function showCustomerForm(c){
     html+='<div class="form-group"><label>Sales</label><select id="fCustSales"><option value="">Pilih Sales...</option></select></div>';
   }
   html+='<div class="form-group"><label>Keterangan</label><textarea id="fCustNotes" rows="2">'+(pn.text||'')+'</textarea></div>';
-  html+='<div class="form-group"><label>Foto Toko</label><input type="file" accept="image/*" capture="environment" id="fCustFoto" onchange="previewCustFoto()"><div id="fCustFotoPreview">'+(pn.photo?'<img src="https://byuocfavyxlotmoslihv.supabase.co/storage/v1/object/public/customer-photos/'+pn.photo+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px" alt="preview">':'')+'</div></div>';
+  html+='<div class="form-group"><label>Foto Toko</label><input type="file" accept="image/*" capture="environment" id="fCustFoto" onchange="previewCustFoto()"><div id="fCustFotoPreview">'+(pn.photo?('<img src="'+(pn.photo.indexOf('data:')===0?pn.photo:'https://byuocfavyxlotmoslihv.supabase.co/storage/v1/object/public/customer-photos/'+pn.photo)+'" style="max-width:120px;max-height:120px;border-radius:4px;margin-top:4px" alt="preview">'):'')+'</div></div>';
   html+='<div class="modal-actions">';
   html+='<button class="btn btn-outline" onclick="closeModal()">Batal</button>';
   html+='<button class="btn btn-primary" onclick="simpanCustomer(\''+id+'\')">'+(isEdit?'Simpan':'Tambah')+'</button>';
@@ -4835,6 +4849,13 @@ function parseCustomerNotes(notes){
   var idx=notes.indexOf('__CUSTPHOTO__:');
   if(idx===0){
     var after=notes.slice('__CUSTPHOTO__:'.length);
+    var sep=after.indexOf('||');
+    if(sep>=0)return{photo:after.slice(0,sep),text:after.slice(sep+2)};
+    return{photo:after,text:''};
+  }
+  var idx2=notes.indexOf('__CUSTPHOTO_DATA__:');
+  if(idx2===0){
+    var after=notes.slice('__CUSTPHOTO_DATA__:'.length);
     var sep=after.indexOf('||');
     if(sep>=0)return{photo:after.slice(0,sep),text:after.slice(sep+2)};
     return{photo:after,text:''};
